@@ -6797,12 +6797,13 @@ setupRealtime: () => {
         const newDisplay = Math.min((Number(product.display_quantity) || 0) + toDisplay, newQty);
 
         // Update DB
-        await supabase.from('products').update({
+        const { error: productError } = await supabase.from('products').update({
           stock_quantity: newQty,
           display_quantity: newDisplay,
           average_purchase_price: newAvgPrice,
           purchase_price: item.purchase_price
         }).eq('id', product.id);
+        if (productError) throw new Error(`خطأ في تحديث مخزون/تكلفة ${product.name}: ${productError.message}`);
 
         // Update local state copy
         updatedProducts[productIndex] = {
@@ -6891,11 +6892,12 @@ setupRealtime: () => {
         
         const finalPurchasePrice = delta.newPrice !== undefined ? delta.newPrice : product.purchase_price;
 
-        await supabase.from('products').update({
+        const { error: productError } = await supabase.from('products').update({
           stock_quantity: newStock,
           average_purchase_price: newAvgPrice,
           purchase_price: finalPurchasePrice
         }).eq('id', productId);
+        if (productError) throw new Error(`خطأ في تحديث تكلفة المنتج: ${productError.message}`);
 
         updatedProducts[productIndex] = {
           ...product,
@@ -6929,7 +6931,8 @@ setupRealtime: () => {
     if (invError) throw new Error(`خطأ في تحديث الفاتورة: ${invError.message}`);
 
     // 3. Replace Items (Delete old, Insert new)
-    await supabase.from('purchase_items').delete().eq('invoice_id', invoiceId);
+    const { error: deleteItemsError } = await supabase.from('purchase_items').delete().eq('invoice_id', invoiceId);
+    if (deleteItemsError) throw new Error(`خطأ في حذف أصناف الفاتورة القديمة: ${deleteItemsError.message}`);
     
     const itemsToInsert = items.map(item => ({
       invoice_id: invoiceId,
@@ -6989,11 +6992,12 @@ setupRealtime: () => {
         const newAvgPrice = newStock > 0 ? remainingValue / newStock : 0;
         const newDisplay = Math.min(Number(product.display_quantity) || 0, newStock);
 
-        await supabase.from('products').update({
+        const { error: productError } = await supabase.from('products').update({
           stock_quantity: newStock,
           display_quantity: newDisplay,
           average_purchase_price: newAvgPrice
         }).eq('id', product.id);
+        if (productError) throw new Error(`خطأ في عكس مخزون المنتج: ${productError.message}`);
 
         updatedProducts[productIndex] = {
           ...product,
@@ -7004,7 +7008,8 @@ setupRealtime: () => {
       }
 
       // Delete purchase items first
-      await supabase.from('purchase_items').delete().eq('invoice_id', id);
+      const { error: deleteItemsError } = await supabase.from('purchase_items').delete().eq('invoice_id', id);
+      if (deleteItemsError) throw deleteItemsError;
       // Delete the invoice
       const { error } = await supabase.from('purchase_invoices').delete().eq('id', id);
       if (error) throw error;
