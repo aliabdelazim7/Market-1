@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useStore, HELD_STATUS_LABEL, type HeldInvoice, type HeldStatus, type Product } from '../store/useStore';
+import { useStore, type HeldInvoice, type Product } from '../store/useStore';
 import { useTheme } from '../theme';
 import {
   isMasterCashier, cashierHasFullAccess, cashierCan, pricesHiddenFor,
@@ -8,7 +8,7 @@ import {
 } from '../utils/permissions';
 import { HeldReturnModal } from '../components/HeldReturnModal';
 import { EditInvoiceModal } from '../components/EditInvoiceModal';
-import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, ArrowLeft, ArrowRight, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, UserMinus, Clock, PauseCircle, Undo2, Truck, Hourglass, Play } from 'lucide-react';
+import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, ArrowLeft, ArrowRight, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, UserMinus, Clock, PauseCircle, Undo2, Hourglass, Play } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { normalizeArabic, formatImageUrl } from '../utils/textUtils';
 import { printBarcodeLabelsBatch, generateBarcode } from '../utils/printBarcodeLabels';
@@ -21,7 +21,7 @@ import { categoriesFor, withAddedCategory } from '../utils/financeCategories';
 import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, refundRecordOf } from '../utils/treasury';
 import { calculateOrderReturnValue } from '../utils/returns';
 import { paidSplitForDisplay, paidForDisplay, exchangeSettledTotal } from '../utils/invoicePayments';
-import { printShippingLabel, type ShippingLabelHeld } from '../utils/printShippingLabel';
+import { printReceipt } from '../utils/printReceipt';
 import { loadParkedCarts, addParkedCart, removeParkedCart, parkedAgeLabel, type ParkedCart } from '../utils/parkedCarts';
 import { saveDayBudgetCache, loadDayBudgetCache } from '../utils/offlineCache';
 
@@ -112,7 +112,7 @@ async function loadDayBudgetSource(dayStr: string, start: Date, end: Date, local
 }
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, isOfflineMode, offlineSnapshotAt, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings, restoreCart, carriers } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, isOfflineMode, offlineSnapshotAt, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, recordHeldDepositConversion, updateSettings, restoreCart } = useStore();
   // Transfer day-closing balance to savings (with manager OTP)
   const [showSaveXfer, setShowSaveXfer] = useState(false);
   const [saveXfer, setSaveXfer] = useState<Record<string, string>>({ cash: '', visa: '', wallet: '', instapay: '' });
@@ -542,58 +542,6 @@ export default function POS() {
   const [weightUnitInput, setWeightUnitInput] = useState(''); // الكمية بالوحدة الأساسية
   const [weightSubInput, setWeightSubInput] = useState('');   // الكمية بالوحدة الفرعية (جرام...)
 
-  // ── تحديد منصة / قناة البيع (أمازون، نون، جوميا، متجر مخصص) ──
-  const [selectedPlatform, setSelectedPlatform] = useState<string>('website');
-
-  const availableCustomStores = useMemo(() => {
-    const storeMap = new Map<string, string>();
-    products.forEach((p) => {
-      (p.custom_stores || []).forEach((cs: any) => {
-        if (cs.id && cs.name) storeMap.set(cs.id, cs.name);
-      });
-    });
-    return Array.from(storeMap.entries()).map(([id, name]) => ({ id, name }));
-  }, [products]);
-
-  const getTargetPlatformPrice = (p: Product, platform: string) => {
-    if (platform === 'amazon' && p.amazon_price && p.amazon_price > 0) return p.amazon_price;
-    if (platform === 'noon' && p.noon_price && p.noon_price > 0) return p.noon_price;
-    if (platform === 'jumia' && p.jumia_price && p.jumia_price > 0) return p.jumia_price;
-    if (platform.startsWith('custom_')) {
-      const cKey = platform.replace('custom_', '');
-      const cs = (p.custom_stores || []).find((c: any) => c.id === cKey || c.name === cKey);
-      if (cs && cs.price && cs.price > 0) return cs.price;
-    }
-    return p.sale_price;
-  };
-
-  const getPlatformDisplayName = (p: string) => {
-    if (p === 'jumia') return 'جوميا (Jumia)';
-    if (p === 'amazon') return 'أمازون (Amazon)';
-    if (p === 'noon') return 'نون (Noon)';
-    if (p === 'salla') return 'سلة (Salla)';
-    if (p === 'zid') return 'زد (Zid)';
-    if (p === 'tiktok') return 'تيك توك (TikTok)';
-    if (p === 'website') return 'الويب سايت (المتجر الإلكتروني)';
-    if (p.startsWith('custom_')) {
-      const cs = availableCustomStores.find((c) => `custom_${c.id}` === p);
-      if (cs) return cs.name;
-    }
-    const carrier = (carriers || []).find((c: any) => c.id === p || c.name === p);
-    if (carrier) return carrier.name;
-    return p;
-  };
-
-  const handlePlatformChange = (newPlatform: string) => {
-    setSelectedPlatform(newPlatform);
-    cart.forEach((cartItem) => {
-      const p = products.find((x) => x.id === cartItem.id);
-      if (!p) return;
-      const targetPrice = getTargetPlatformPrice(p, newPlatform);
-      updatePrice(cartItem.id, targetPrice);
-    });
-  };
-
   // فتح نافذة الوزن أو الإضافة المباشرة حسب نوع وحدة المنتج
   const handleAddProduct = (product: Product) => {
     if (isFractionalUnit(product.unit)) {
@@ -602,10 +550,6 @@ export default function POS() {
       setWeightSubInput('');
     } else {
       addToCart(product);
-      if (selectedPlatform !== 'website') {
-        const targetPrice = getTargetPlatformPrice(product, selectedPlatform);
-        updatePrice(product.id, targetPrice);
-      }
     }
   };
 
@@ -624,10 +568,6 @@ export default function POS() {
     const qty = computeWeightQty();
     if (qty <= 0) return;
     addToCartQty(weightProduct, qty);
-    if (selectedPlatform !== 'website') {
-      const targetPrice = getTargetPlatformPrice(weightProduct, selectedPlatform);
-      updatePrice(weightProduct.id, targetPrice);
-    }
     setWeightProduct(null);
     setWeightUnitInput('');
     setWeightSubInput('');
@@ -941,19 +881,12 @@ export default function POS() {
   const [workDateOverride, setWorkDateOverride] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showHeldModal, setShowHeldModal] = useState(false);
-  // الطلب اللي بيتطبع دلوقتي — يمنع الضغط المتكرر (الطباعة الصامتة مالهاش مؤشّر).
-  const [printingHeldId, setPrintingHeldId] = useState<string | null>(null);
-  // فلتر شاشة المعلقة بالحالة + الطلب اللي بيتعمله مرتجع.
-  const [heldFilter, setHeldFilter] = useState<'all' | 'shop' | HeldStatus>('all');
+  // قائمة الفواتير المعلقة للمحل.
   const [returningHeld, setReturningHeld] = useState<HeldInvoice | null>(null);
   const [holdBusy, setHoldBusy] = useState(false);
   // نموذج حفظ فاتورة معلّقة مع عربون
   const [showHoldForm, setShowHoldForm] = useState(false);
   const [holdDepositPay, setHoldDepositPay] = useState<Record<string, string>>({});
-  // نوع الحجز: حجز محل (العميل هييجي ياخده) أو طلب أونلاين (بيمرّ بشحن وتسليم).
-  const [holdKind, setHoldKind] = useState<'shop' | 'online'>('shop');
-  const [holdAddress, setHoldAddress] = useState('');
-  const [holdShipNote, setHoldShipNote] = useState('');
   const holdDepositTotal = activePayKeys.reduce((s, k) => s + (parseFloat(holdDepositPay[k] || '') || 0), 0);
   // عربون محصّل لفاتورة معلّقة يجري إتمامها الآن (يُضاف للمدفوع ويُسجّل تحويله بعد الإتمام)
   const [activeDeposit, setActiveDeposit] = useState<{ amount: number; split: Record<string, number> } | null>(null);
@@ -1655,19 +1588,9 @@ export default function POS() {
   };
 
   const printInvoice = (invId: string, orderDetails: any) => {
-    const currentSettings = { ...storeSettings };
-    const heldData: ShippingLabelHeld = {
-      id: invId,
-      customer_name: orderDetails.customerName || (orderDetails.customer ? orderDetails.customer.name : 'عميل نقدي'),
-      customer_phone: orderDetails.customerPhone || (orderDetails.customer ? orderDetails.customer.phone : null),
-      customer_address: orderDetails.customerAddress || (orderDetails.customer ? orderDetails.customer.address : null),
-      items: orderDetails.cart || [],
-      total: orderDetails.total || 0,
-      deposit: orderDetails.paidAmount || orderDetails.total || 0,
-      created_at: new Date().toISOString(),
-      cashier_name: activeCashier?.name || 'مدير النظام'
-    };
-    void printShippingLabel(heldData, currentSettings);
+    printReceipt({ id: invId, items: orderDetails.cart || [], total: orderDetails.total || 0,
+      paidAmount: orderDetails.paidAmount || 0, customerName: orderDetails.customerName,
+      cashierName: activeCashier?.name, currency: storeSettings.currency });
   };
 
   // Opens payment method modal before checkout
@@ -1738,8 +1661,7 @@ export default function POS() {
     // تاريخ مخصّص للفاتورة (فواتير قديمة) من شارة التاريخ — فاضي = تاريخ الآن.
     // نستخدم منتصف اليوم المحاسبي المختار عشان يقع مضمون داخل نطاق تقفيله.
     const saleDateISO = workDateOverride ? timestampForBusinessDate(workDateOverride, storeSettings) : undefined;
-    const platformNameForSync = getPlatformDisplayName(selectedPlatform);
-    const invoiceId = await checkout(currentTotal, { name: currentCustomerName, phone: currentCustomerPhone, custom_id: currentCustomId }, effectivePaidAmount, 'sale', primaryMethod as any, finalSplit as any, undefined, deferredNote, currentCouponCode, currentCouponDiscount, undefined, saleDateISO, false, platformNameForSync);
+    const invoiceId = await checkout(currentTotal, { name: currentCustomerName, phone: currentCustomerPhone, custom_id: currentCustomId }, effectivePaidAmount, 'sale', primaryMethod as any, finalSplit as any, undefined, deferredNote, currentCouponCode, currentCouponDiscount, undefined, saleDateISO, false, undefined);
 
     if (invoiceId === null) return;
 
@@ -1820,16 +1742,12 @@ export default function POS() {
       notes: deferredNote,
       deposit,
       depositSplit,
-      kind: holdKind,
-      ...(holdKind === 'online' ? { customerAddress: holdAddress, shippingNote: holdShipNote } : {}),
+      kind: 'shop',
     });
     setHoldBusy(false);
     if (ok) {
       setShowHoldForm(false);
       setHoldDepositPay({});
-      setHoldKind('shop');
-      setHoldAddress('');
-      setHoldShipNote('');
       setCustomerName('');
       setCustomerPhone('');
       setCustomerId('');
@@ -1846,11 +1764,7 @@ export default function POS() {
   };
 
   // الطلبات الظاهرة في شاشة المعلقة حسب الفلتر المختار.
-  const visibleHeld = heldInvoices.filter((h) => {
-    if (heldFilter === 'all') return true;
-    if (heldFilter === 'shop') return h.kind !== 'online';
-    return h.kind === 'online' && (h.status || 'held') === heldFilter;
-  });
+  const visibleHeld = heldInvoices.filter(() => true);
 
   // تأكيد بيع فاتورة معلقة: تُحمَّل في الكاشير ليُكمل الكاشير التحصيل والطباعة.
   const handleConfirmHeld = async (id: string) => {
@@ -4067,49 +3981,15 @@ export default function POS() {
               onClick={() => setShowMobileOptions(v => !v)}
               className="w-full bg-slate-100 dark:bg-slate-800 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300 touch-feedback"
             >
-              <div className="flex items-center gap-1.5 truncate">
-                <Truck size={14} className="text-indigo-500 shrink-0" />
-                <span className="truncate">
-                  {discountStr || couponInput ? 'خصم / كوبون مفعل 🏷️' : `المنصة: ${selectedPlatform === 'website' ? 'المباشر' : selectedPlatform}`}
-                </span>
-              </div>
+              
               <span className="text-[11px] text-indigo-600 dark:text-indigo-400 font-bold shrink-0">
-                {showMobileOptions ? 'إخفاء الخيارات ▲' : 'الخصم والمنصة والتعليق ⚙️'}
+                {showMobileOptions ? 'إخفاء الخيارات ▲' : 'الخصم والتعليق ⚙️'}
               </span>
             </button>
           </div>
 
           {/* Sales Platform, Salesperson, Discount, Coupon & Hold Section (Always visible on desktop lg:block, collapsible on mobile) */}
           <div className={`${showMobileOptions ? 'block' : 'hidden lg:block'}`}>
-            {/* Sales Platform Selection (منصة البيع) */}
-            <div className="mb-3">
-              <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block mb-1">🏬 منصة / قناة البيع (تطبييق أسعار المنصة تلقائياً)</label>
-              <select
-                id="pos-sales-platform"
-                value={selectedPlatform}
-                onChange={(e) => handlePlatformChange(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-900 border border-indigo-200 dark:border-indigo-900/50 rounded-xl px-3 py-2.5 text-sm font-black text-indigo-700 dark:text-indigo-300 focus:ring-2 focus:ring-indigo-500 outline-none"
-              >
-                <option value="website">🌐 متجر الموقع الرئيسي (المباشر)</option>
-                <option value="amazon">📦 متجر أمازون (Amazon)</option>
-                <option value="noon">🏪 متجر نون (Noon)</option>
-                <option value="jumia">🛍️ متجر جوميا (Jumia)</option>
-                <option value="salla">🏬 متجر سلة (Salla)</option>
-                <option value="zid">🏬 متجر زد (Zid)</option>
-                <option value="tiktok">📱 متجر تيك توك (TikTok)</option>
-                {availableCustomStores.map((cs: any) => (
-                  <option key={cs.id} value={`custom_${cs.id}`}>
-                    🟣 {cs.name}
-                  </option>
-                ))}
-                {(carriers || []).filter((c: any) => c.status === 'active' && !['amazon', 'noon', 'jumia', 'salla', 'zid', 'tiktok'].includes((c.name || '').toLowerCase())).map((c: any) => (
-                  <option key={c.id} value={c.id}>
-                    🚚 {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
             {/* Salesperson (for commission tracking) */}
             <div className="mb-3">
               <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block mb-1">👤 الموظف البائع (لحساب مبيعاته وعمولته)</label>
@@ -4386,51 +4266,6 @@ export default function POS() {
                 <span className="text-sm font-bold text-indigo-600 dark:text-indigo-400">إجمالي الفاتورة</span>
                 <span className="text-2xl font-black text-indigo-600 dark:text-indigo-400">{total.toFixed(2)} <span className="text-xs opacity-60">{storeSettings.currency}</span></span>
               </div>
-              {/* نوع الحجز — الأونلاين بيتتبّع بحالات (شحن/تسليم) من لوحة التحكم */}
-              <div>
-                <label className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2 block">نوع الفاتورة</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setHoldKind('shop')}
-                    className={`p-3 rounded-2xl border-2 text-sm font-black transition ${holdKind === 'shop' ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-500'}`}
-                  >
-                    🏬 حجز محل
-                    <span className="block text-[10px] font-bold mt-0.5 opacity-70">العميل هييجي ياخده</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHoldKind('online')}
-                    className={`p-3 rounded-2xl border-2 text-sm font-black transition ${holdKind === 'online' ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-400' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-500'}`}
-                  >
-                    🚚 أونلاين
-                    <span className="block text-[10px] font-bold mt-0.5 opacity-70">شحن ← تسليم</span>
-                  </button>
-                </div>
-              </div>
-              {/* عنوان التوصيل — مطلوب للأونلاين عشان بوليصة الشحن */}
-              {holdKind === 'online' && (
-                <div className="space-y-3 bg-sky-50 dark:bg-sky-900/20 border border-sky-100 dark:border-sky-800/40 rounded-2xl p-4">
-                  <div>
-                    <label className="text-xs font-black text-sky-700 dark:text-sky-400 uppercase tracking-widest mb-1.5 block">عنوان التوصيل <span className="text-red-500">*</span></label>
-                    <textarea
-                      value={holdAddress} onChange={(e) => setHoldAddress(e.target.value)}
-                      placeholder="المحافظة، المنطقة، الشارع، رقم العمارة والدور..."
-                      className="w-full bg-white dark:bg-slate-900 border-2 border-transparent focus:border-sky-500 py-2.5 px-3 rounded-xl outline-none font-bold text-sm resize-none h-20"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-black text-slate-500 dark:text-slate-400 uppercase mb-1.5 block">ملاحظة للمندوب (اختياري)</label>
-                    <input
-                      value={holdShipNote} onChange={(e) => setHoldShipNote(e.target.value)}
-                      placeholder="علامة مميزة، أفضل وقت للتسليم..."
-                      className="w-full bg-white dark:bg-slate-900 border-2 border-transparent focus:border-sky-500 py-2.5 px-3 rounded-xl outline-none font-bold text-sm"
-                    />
-                  </div>
-                  {!holdAddress.trim() && <p className="text-[11px] font-black text-amber-600 dark:text-amber-400">⚠️ من غير عنوان، بوليصة الشحن هتطلع ناقصة.</p>}
-                  {!customerPhone.trim() && <p className="text-[11px] font-black text-amber-600 dark:text-amber-400">⚠️ اكتب موبايل العميل — المندوب محتاجه.</p>}
-                </div>
-              )}
               <div>
                 <label className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2 block">العربون المحصّل (اختياري) — يدخل الخزنة</label>
                 <div className="grid grid-cols-2 gap-3">
@@ -4563,21 +4398,6 @@ export default function POS() {
               </button>
             </div>
 
-            {/* فلتر بالحالة — نفس حالات الموديول، عشان الكاشير يشوف طلبات كل مرحلة */}
-            <div className="px-5 pt-4 flex flex-wrap gap-2">
-              {([
-                { id: 'all' as const, label: 'الكل', count: heldInvoices.length },
-                ...(['held', 'shipped', 'money_pending'] as HeldStatus[]).map((st) => ({
-                  id: st, label: HELD_STATUS_LABEL[st], count: heldInvoices.filter((h) => (h.status || 'held') === st).length,
-                })),
-                { id: 'shop' as const, label: '🏬 حجوزات المحل', count: heldInvoices.filter((h) => h.kind !== 'online').length },
-              ]).map((c) => (
-                <button key={c.id} onClick={() => setHeldFilter(c.id as typeof heldFilter)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-black border transition ${heldFilter === c.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}>
-                  {c.label} ({c.count})
-                </button>
-              ))}
-            </div>
 
             <div className="p-5 space-y-3 overflow-y-auto">
               {visibleHeld.length === 0 ? (
@@ -4597,12 +4417,6 @@ export default function POS() {
                       <div className="flex justify-between items-start gap-3 mb-2">
                         <div className="min-w-0">
                           <div className="font-black text-slate-800 dark:text-white truncate flex items-center gap-2">
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-md border shrink-0 ${h.kind === 'online' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-500/40'}`}>
-                              {h.kind === 'online' ? '🚚 أونلاين' : '🏬 حجز'}
-                            </span>
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-md border shrink-0 ${h.status === 'shipped' ? 'bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-500/40' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                              {HELD_STATUS_LABEL[(h.status || 'held') as HeldStatus]}
-                            </span>
                             <span className="truncate">{h.customer_name?.trim() || 'عميل نقدي'}</span>
                             {h.customer_phone ? <span className="text-xs font-bold text-slate-400 shrink-0">{h.customer_phone}</span> : null}
                           </div>
@@ -4619,14 +4433,6 @@ export default function POS() {
                         </div>
                       </div>
 
-                      {/* العنوان بيظهر للكاشير زي الموديول — هو أهم بيانات الطلب الأونلاين */}
-                      {h.kind === 'online' && (
-                        <div className={`text-xs font-bold mb-2 ${h.customer_address ? 'text-sky-700 dark:text-sky-400' : 'text-amber-600'}`}>
-                          📍 {h.customer_address?.trim() || 'لا يوجد عنوان مسجّل'}
-                          {h.shipping_note && <span className="block text-[11px] text-slate-400 mt-0.5">🚚 {h.shipping_note}</span>}
-                        </div>
-                      )}
-
                       <div className="text-xs text-slate-500 dark:text-slate-400 font-medium mb-2 line-clamp-2">
                         {itemsCount} قطعة · {h.items.map((i) => `${i.name}×${formatQty(i.quantity, i.unit || 'قطعة')}`).join(' ، ')}
                       </div>
@@ -4637,64 +4443,12 @@ export default function POS() {
                         </div>
                       )}
 
-                      {/* الأونلاين: طباعة الإيصال + التحكّم الكامل في حالة الطلب من الكاشير.
-                          الحالات النشطة (معلق/تم الشحن) بتتغيّر من هنا مباشرةً؛ «تم التسليم»
-                          و«ملغي» ليهم أزرارهم تحت (تسليم وتحصيل / إرجاع للمخزون) لأنهم
-                          بيحرّكوا فلوس ومخزون مش مجرد حالة. */}
-                      {h.kind === 'online' && (
-                        <div className="space-y-2 mb-2">
-                          {/* دورة الحالة: تجهيز ← شحن ← الفلوس في الطريق.
-                              «تم التحصيل» مش هنا — ليه زرار «تسليم وتحصيل» تحت
-                              لأنه بيعمل فاتورة بيع فعلية ويدخّل فلوس الخزنة. */}
-                          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 rounded-xl p-1">
-                            {([
-                              { key: 'held', label: 'تم التجهيز', icon: Clock },
-                              { key: 'shipped', label: 'تم الشحن', icon: Truck },
-                              { key: 'money_pending', label: 'الفلوس في الطريق', icon: Wallet },
-                            ] as const).map((s) => {
-                              const active = (h.status || 'held') === s.key;
-                              return (
-                                <button
-                                  key={s.key}
-                                  onClick={async () => { if (!active) await setHeldInvoiceStatus(h.id, s.key); }}
-                                  className={`flex-1 py-1.5 px-1 rounded-lg font-black text-[10px] flex items-center justify-center gap-1 transition active:scale-95 ${active ? 'bg-violet-600 text-white shadow' : 'text-slate-500 dark:text-slate-400'}`}
-                                >
-                                  <s.icon size={12} className="shrink-0" /> {s.label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          {/* الطباعة الصامتة مبيبانش منها حاجة على الشاشة، فالكاشير كان
-                              بيدوس تاني وتالت وتطلع نسخ مكرّرة — نقفل الزرار لحد ما تخلص. */}
-                          <button
-                            onClick={async () => {
-                              if (printingHeldId) return;
-                              setPrintingHeldId(h.id);
-                              try { await printShippingLabel(h, storeSettings); }
-                              finally { setPrintingHeldId(null); }
-                            }}
-                            disabled={!!printingHeldId}
-                            className="w-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50"
-                          >
-                            <Printer size={14} /> {printingHeldId === h.id ? 'جارٍ الطباعة...' : 'طباعة إيصال الطلب'}
-                          </button>
-                          {/* المرتجع بيظهر بعد الشحن بس — قبل كده «إرجاع للمخزون» هو التصرّف الصح */}
-                          {(h.status || 'held') !== 'held' && (
-                            <button
-                              onClick={() => setReturningHeld(h)}
-                              className="w-full bg-white dark:bg-slate-800 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-900/40 py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
-                            >
-                              <Undo2 size={14} /> مرتجع (العميل مستلمش كله أو جزء منه)
-                            </button>
-                          )}
-                        </div>
-                      )}
                       <div className="flex gap-2">
                         <button
                           onClick={() => handleConfirmHeld(h.id)}
                           className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1.5 transition active:scale-95"
                         >
-                          <Check size={16} /> {h.kind === 'online' ? 'تم التحصيل' : 'تأكيد البيع'}
+                          <Check size={16} /> تأكيد البيع
                         </button>
                         <button
                           onClick={() => handleReturnHeld(h.id)}

@@ -3,7 +3,7 @@ import { useStore, HELD_STATUS_LABEL, HELD_KIND_LABEL, type HeldInvoice, type He
 import { PackageSearch, Search, Truck, CheckCircle2, XCircle, AlertTriangle, Clock, RefreshCw, Printer, Undo2, Wallet } from 'lucide-react';
 import { activePaymentKeys, payLabelOf } from '../../utils/paymentMethods';
 import { formatQty } from '../../utils/units';
-import { printShippingLabel } from '../../utils/printShippingLabel';
+import { printReceipt } from '../../utils/printReceipt';
 import { HeldReturnModal } from '../../components/HeldReturnModal';
 
 // حد اعتبار الحجز «قديم» — بعده بيتلوّن تحذيري في القائمة وبيتعدّ في بطاقة التنبيه.
@@ -304,7 +304,16 @@ export default function HeldInvoices() {
                         onClick={async () => {
                           if (printingId) return;
                           setPrintingId(r.id);
-                          try { await printShippingLabel(r, storeSettings); } finally { setPrintingId(null); }
+                          try {
+                            printReceipt({
+                              id: String(r.id),
+                              items: r.items || [],
+                              total: r.total || 0,
+                              paidAmount: r.deposit || 0,
+                              customerName: r.customer_name || undefined,
+                              currency: storeSettings.currency,
+                            });
+                          } finally { setPrintingId(null); }
                         }}
                         disabled={!!printingId}
                         className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-3 py-2 rounded-xl font-black text-xs disabled:opacity-50">

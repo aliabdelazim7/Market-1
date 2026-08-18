@@ -12,10 +12,10 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { EditInvoiceModal } from '../../components/EditInvoiceModal';
 import { AddInvoiceModal } from '../../components/AddInvoiceModal';
-import { printShippingLabel } from '../../utils/printShippingLabel';
+import { printReceipt } from '../../utils/printReceipt';
 
 export default function Invoices() {
-  const { orders, storeSettings, deleteOrder, undoReturn, processReturn, syncInvoiceToPlatformCollection } = useStore();
+  const { orders, storeSettings, deleteOrder, undoReturn, processReturn } = useStore();
   const [showAddModal, setShowAddModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'sales' | 'returns' | 'deferred' | 'exchange' | 'deleted'>('all');
@@ -83,18 +83,6 @@ export default function Invoices() {
       );
 
       if (ok) {
-        // Sync updated expected amount to platform collections table
-        const updatedOrd = useStore.getState().orders.find((o) => o.id === returnOrder.id);
-        if (updatedOrd) {
-          void syncInvoiceToPlatformCollection({
-            id: String(updatedOrd.id),
-            total: updatedOrd.total,
-            paid_amount: updatedOrd.paid_amount,
-            customer_name: updatedOrd.customer?.name,
-            notes: updatedOrd.notes || undefined
-          });
-        }
-
         alert('تم تسجيل المرتجع وتعديل المخزن والحسابات والديون بنجاح! ✅');
         setReturnOrder(null);
       } else {
@@ -143,7 +131,14 @@ export default function Invoices() {
   }, [activeOrders, returnInvoiceSearch]);
 
   const handlePrint = (order: any) => {
-    void printShippingLabel(order, storeSettings);
+    printReceipt({
+      id: String(order.id),
+      items: order.items || [],
+      total: order.total || 0,
+      paidAmount: order.paid_amount || 0,
+      customerName: order.customer?.name,
+      currency: storeSettings.currency,
+    });
   };
 
   const handleSendWhatsApp = (order: any) => {

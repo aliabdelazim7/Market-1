@@ -1,51 +1,19 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Layers, Package, FileText, ShoppingCart, RotateCcw, Truck, Wallet, BarChart3, CreditCard, ArrowLeftRight, Users, Landmark, PiggyBank, DollarSign, Printer, Database, Moon, Sun, Settings, LogOut, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Layers, Package, FileText, ShoppingCart, RotateCcw, Wallet, BarChart3, CreditCard, ArrowLeftRight, Users, Landmark, PiggyBank, Printer, Database, Moon, Sun, Settings, LogOut, Menu, X } from 'lucide-react';
 import { useStore } from '../../store/useStore';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTheme } from '../../theme';
 import { isOwner as isOwnerUser, canSeePage } from '../../utils/permissions';
 
 export default function AdminLayout() {
   const navigate = useNavigate();
-  const { storeSettings, logout, maintenanceAppointments, carSubscriptions, updateMaintenanceReminded, adminPermissions } = useStore();
+  const { storeSettings, logout, adminPermissions } = useStore();
   const isOwner = isOwnerUser(adminPermissions);
   const canSee = (path: string) => canSeePage(adminPermissions, path);
-  const [hasCheckedReminders, setHasCheckedReminders] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // الثيم بقى من ستور واحد مشترك — مفيش نسخة محلية هنا تتعارض مع POS.
   const { isDark, toggle: toggleDarkMode } = useTheme();
 
-  useEffect(() => {
-    if (hasCheckedReminders || maintenanceAppointments.length === 0 || carSubscriptions.length === 0) return;
-
-    const checkReminders = async () => {
-      const tomorrowStr = new Date(Date.now() + 86400000).toDateString();
-      
-      for (const appt of maintenanceAppointments) {
-        if (appt.status === 'pending' && !appt.is_reminded) {
-          const apptDateStr = new Date(appt.appointment_date).toDateString();
-          if (apptDateStr === tomorrowStr) {
-            const car = carSubscriptions.find(c => c.id === appt.subscription_id);
-            if (car) {
-              fetch('/api/telegram-alert', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  type: 'general',
-                  message: `تذكير: موعد صيانة غداً للسيارة رقم ${car.car_number} باسم ${car.customer_name}.`
-                }),
-              }).catch(console.warn);
-
-              await updateMaintenanceReminded(appt.id);
-            }
-          }
-        }
-      }
-      setHasCheckedReminders(true);
-    };
-
-    checkReminders();
-  }, [maintenanceAppointments, carSubscriptions, hasCheckedReminders, updateMaintenanceReminded]);
 
   // Exact 21 sidebar items matching user request image
   const menuItems = [
@@ -55,7 +23,6 @@ export default function AdminLayout() {
     { name: 'الفواتير', path: '/admin/invoices', icon: FileText },
     { name: 'المشتريات', path: '/admin/purchase-invoices-page', icon: ShoppingCart },
     { name: 'المرتجعات', path: '/admin/invoices', icon: RotateCcw },
-    { name: 'المنصات والشحن', path: '/admin/logistics-orders', icon: Truck },
     { name: 'المصروفات', path: '/admin/finance', icon: Wallet },
     { name: 'التقارير', path: '/admin/reports', icon: BarChart3 },
     { name: 'إدارة الديون', path: '/admin/supplier-ledger-page', icon: CreditCard },
@@ -64,7 +31,6 @@ export default function AdminLayout() {
     { name: 'الموردين', path: '/admin/suppliers', icon: Users },
     { name: 'الحسابات البنكية', path: '/admin/payment-accounts', icon: Landmark },
     { name: 'فلوس المتجر', path: '/admin/savings', icon: PiggyBank },
-    { name: 'تحصيل المنصات', path: '/admin/carriers', icon: DollarSign },
     { name: 'نقطة البيع', path: '/admin/pos', icon: Printer },
     { name: 'النسخ الاحتياطي', path: '/admin/offline-invoices', icon: Database },
     ...(isOwner ? [{ name: 'المستخدمين', path: '/admin/users', icon: Users }] : []),

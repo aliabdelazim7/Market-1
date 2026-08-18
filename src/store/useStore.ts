@@ -2678,7 +2678,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   })),
 
   // ── Checkout ───────────────────────────────────────────────
-  checkout: async (total, customerDetails, paidAmount = total, type = 'sale', paymentMethod = 'cash', splitPayments, cashierName, notes, couponCode, discountAmount, carId, dateISO, toMainTreasury = false, platformName?: string) => {
+  checkout: async (total, customerDetails, paidAmount = total, type = 'sale', paymentMethod = 'cash', splitPayments, cashierName, notes, couponCode, discountAmount, carId, dateISO, toMainTreasury = false) => {
     const state = get();
     const finalCashierName = cashierName || state.activeCashier?.name || 'مدير النظام';
     const sp = state.salesperson;
@@ -3066,15 +3066,6 @@ ${arLabels} (${droppedColumns.join('، ')})
       });
       notifyLowStock(state.products, newOrder.items, updatedProducts, finalCashierName, state.storeSettings.currency);
 
-      void get().syncInvoiceToPlatformCollection({
-        id: String(invoiceId),
-        total,
-        paid_amount: savedPaidAmount,
-        customer_name: finalCustomer?.name,
-        notes: finalNotes || undefined,
-        platform_name: platformName || undefined,
-        items: newOrder.items
-      });
 
       return invoiceId;
     } catch (err) {

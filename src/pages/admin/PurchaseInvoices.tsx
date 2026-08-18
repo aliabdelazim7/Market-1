@@ -11,7 +11,6 @@ export default function PurchaseInvoices() {
   // Form state
   const [invSupplierId, setInvSupplierId] = useState('');
   const [invWarehouseId, setInvWarehouseId] = useState('');
-  const [freightCost, setFreightCost] = useState<number>(0);
   const [taxAmount, setTaxAmount] = useState<number>(0);
   const [discount, setDiscount] = useState<number>(0);
   const [paidAmount, setPaidAmount] = useState<number>(0);
@@ -35,13 +34,12 @@ export default function PurchaseInvoices() {
 
   // Calculations
   const subtotal = items.reduce((sum, item) => sum + item.quantity * item.unit_cost, 0);
-  const totalAmount = subtotal - discount + taxAmount + freightCost;
+  const totalAmount = subtotal - discount + taxAmount;
 
   // Landed Cost allocation per unit
   const landedItems: AdvPurchaseInvoiceItem[] = items.map((item) => {
     const itemTotal = item.quantity * item.unit_cost;
-    const shareOfFreight = subtotal > 0 ? (itemTotal / subtotal) * freightCost : 0;
-    const landedUnitCost = item.quantity > 0 ? (itemTotal + shareOfFreight) / item.quantity : item.unit_cost;
+    const landedUnitCost = item.quantity > 0 ? itemTotal / item.quantity : item.unit_cost;
     return {
       product_id: item.product_id,
       quantity: item.quantity,
@@ -68,7 +66,7 @@ export default function PurchaseInvoices() {
         subtotal,
         discount,
         tax_amount: taxAmount,
-        freight_cost: freightCost,
+        freight_cost: 0,
         total_amount: totalAmount,
         paid_amount: paidAmount,
         notes,
@@ -78,7 +76,6 @@ export default function PurchaseInvoices() {
     if (ok) {
       setShowModal(false);
       setItems([]);
-      setFreightCost(0);
       setTaxAmount(0);
       setDiscount(0);
       setPaidAmount(0);
@@ -101,7 +98,7 @@ export default function PurchaseInvoices() {
             فواتير المشتريات التكليفية (Landed Cost)
           </h1>
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
-            تسجيل فواتير الشراء، التكلفة الفعلية للمنتج (الشحن + الضرائب)، وتحديث متوسط سعر الشراء تلقائياً
+            تسجيل فواتير الشراء، التكلفة الفعلية للمنتج، وتحديث متوسط سعر الشراء تلقائياً
           </p>
         </div>
 
@@ -137,7 +134,6 @@ export default function PurchaseInvoices() {
                 <th className="p-4">رقم الفاتورة</th>
                 <th className="p-4">المورد</th>
                 <th className="p-4">المجموع التكليفي</th>
-                <th className="p-4">مصاريف الشحن</th>
                 <th className="p-4">الإجمالي الكلي</th>
                 <th className="p-4">الحالة</th>
                 <th className="p-4">التاريخ</th>
@@ -159,7 +155,6 @@ export default function PurchaseInvoices() {
                       <td className="p-4 font-mono text-indigo-600 dark:text-indigo-400">{inv.invoice_number}</td>
                       <td className="p-4">{supplier ? supplier.name : 'مورد غير محدد'}</td>
                       <td className="p-4 font-mono">{inv.subtotal.toLocaleString()} ج.م</td>
-                      <td className="p-4 font-mono text-amber-600 dark:text-amber-400">+{inv.freight_cost || 0} ج.م</td>
                       <td className="p-4 font-mono text-slate-900 dark:text-white font-black">
                         {inv.total_amount.toLocaleString()} ج.م
                       </td>
@@ -303,16 +298,7 @@ export default function PurchaseInvoices() {
               </div>
 
               {/* Extra Costs breakdown */}
-              <div className="grid grid-cols-3 gap-3 p-3 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
-                <div>
-                  <label className="block font-bold text-slate-500 dark:text-slate-400 mb-1">مصاريف الشحن واللوجستيات</label>
-                  <input
-                    type="number"
-                    value={freightCost}
-                    onChange={(e) => setFreightCost(Number(e.target.value))}
-                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 font-bold"
-                  />
-                </div>
+              <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
                 <div>
                   <label className="block font-bold text-slate-500 dark:text-slate-400 mb-1">الضرائب</label>
                   <input

@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useStore, type Product, type Order } from '../store/useStore';
-import { X, Search, Plus, Trash2, User, Phone, MapPin, Package, Filter, ScanLine, Code, Store, Truck, CreditCard, Save } from 'lucide-react';
+import { X, Search, Plus, Trash2, User, Phone, Package, Filter, ScanLine, Save } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 interface AddInvoiceModalProps {
@@ -14,32 +14,13 @@ export function AddInvoiceModal({ isOpen, onClose, onSuccess }: AddInvoiceModalP
     products, 
     categories, 
     customers, 
-    carriers, 
     activeCashier, 
     orders, 
-    syncInvoiceToPlatformCollection,
-    loadPlatformCollections, 
-    loadHeldInvoices,
-    loadAllHeldInvoices
   } = useStore();
-
-  const defaultBuiltinPlatforms = [
-    'الويب سايت (المتجر الإلكتروني)',
-    'أمازون (Amazon)',
-    'نون (Noon)',
-    'جوميا (Jumia)',
-    'تيك توك شوب (TikTok Shop)',
-    'متجر سلة (Salla)',
-    'متجر زد (Zid)',
-    'المحل الرئيسي'
-  ];
-  const customCarrierNames = (carriers || []).filter((c) => c.status === 'active').map((c) => c.name);
-  const allDynamicPlatforms = Array.from(new Set([...defaultBuiltinPlatforms, ...customCarrierNames]));
 
   // Form Fields matching user image
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
-  const [customerAddress, setCustomerAddress] = useState('');
 
   // Product Selection Fields
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -47,18 +28,14 @@ export function AddInvoiceModal({ isOpen, onClose, onSuccess }: AddInvoiceModalP
   const [itemCodeInput, setItemCodeInput] = useState<string>('');
   const [productSearch, setProductSearch] = useState<string>('');
   const [selectedProductId, setSelectedProductId] = useState<string>('');
-  const [salesPlatform, setSalesPlatform] = useState<string>('أمازون (Amazon)');
   const [quantity, setQuantity] = useState<number>(1);
   const [customPriceInput, setCustomPriceInput] = useState<string>('');
 
   // Added Products List (Cart)
   const [cart, setCart] = useState<{ product: Product; quantity: number; sale_price: number }[]>([]);
 
-  // Shipping & Payment Fields
-  const [shippingCompany, setShippingCompany] = useState<string>('بوسطة (Bosta)');
-  const [shippingCost, setShippingCost] = useState<number>(0);
-  const [paymentMethod, setPaymentMethod] = useState<string>('cash');
-  const [deliveryStatus, setDeliveryStatus] = useState<string>('money_pending'); // قيد الانتظار / التحصيل
+  // Payment field for ordinary in-store sales
+  const paymentMethod = 'cash';
 
   const [isSaving, setIsSaving] = useState(false);
 
@@ -98,41 +75,6 @@ export function AddInvoiceModal({ isOpen, onClose, onSuccess }: AddInvoiceModalP
     return list.slice(0, 15);
   }, [products, selectedCategory, barcodeInput, itemCodeInput, productSearch]);
 
-  // Auto-detect & suggest custom platform price when product or platform changes
-  const activeProduct = useMemo(() => {
-    return products.find(p => p.id === selectedProductId) || filteredProducts[0];
-  }, [products, selectedProductId, filteredProducts]);
-
-  const suggestedPlatformPrice = useMemo(() => {
-    if (!activeProduct) return 0;
-    const pNameLower = salesPlatform.toLowerCase();
-    
-    if (activeProduct.custom_stores && Array.isArray(activeProduct.custom_stores)) {
-      const matchedStore = activeProduct.custom_stores.find(s => 
-        s.name.toLowerCase().includes(pNameLower) || pNameLower.includes(s.name.toLowerCase())
-      );
-      if (matchedStore && matchedStore.price > 0) {
-        return matchedStore.discount_price && matchedStore.discount_price > 0 ? matchedStore.discount_price : matchedStore.price;
-      }
-    }
-
-    const p = activeProduct as any;
-    if (pNameLower.includes('amazon') || pNameLower.includes('أمازون')) {
-      if (p.amazon_price && p.amazon_price > 0) return p.amazon_price;
-    } else if (pNameLower.includes('noon') || pNameLower.includes('نون')) {
-      if (p.noon_price && p.noon_price > 0) return p.noon_price;
-    } else if (pNameLower.includes('jumia') || pNameLower.includes('جوميا')) {
-      if (p.jumia_price && p.jumia_price > 0) return p.jumia_price;
-    } else if (pNameLower.includes('salla') || pNameLower.includes('سلة')) {
-      if (p.salla_price && p.salla_price > 0) return p.salla_price;
-    } else if (pNameLower.includes('zid') || pNameLower.includes('زد')) {
-      if (p.zid_price && p.zid_price > 0) return p.zid_price;
-    } else if (pNameLower.includes('website') || pNameLower.includes('الويب') || pNameLower.includes('متجر')) {
-      if (p.website_price && p.website_price > 0) return p.website_price;
-    }
-
-    return activeProduct.discount_price && activeProduct.discount_price > 0 ? activeProduct.discount_price : activeProduct.sale_price;
-  }, [activeProduct, salesPlatform]);
 
   if (!isOpen) return null;
 
@@ -151,9 +93,9 @@ export function AddInvoiceModal({ isOpen, onClose, onSuccess }: AddInvoiceModalP
       return;
     }
 
-    const price = customPriceInput.trim() !== '' && !isNaN(Number(customPriceInput)) 
-      ? Number(customPriceInput) 
-      : (suggestedPlatformPrice > 0 ? suggestedPlatformPrice : targetProduct.sale_price);
+    const price = customPriceInput.trim() !== '' && !isNaN(Number(customPriceInput))
+      ? Number(customPriceInput)
+      : (targetProduct.discount_price && targetProduct.discount_price > 0 ? targetProduct.discount_price : targetProduct.sale_price);
 
     const qty = Math.max(1, Number(quantity) || 1);
 
@@ -182,9 +124,9 @@ export function AddInvoiceModal({ isOpen, onClose, onSuccess }: AddInvoiceModalP
 
   // Calculate Subtotal & Total
   const subtotal = cart.reduce((sum, i) => sum + (i.sale_price * i.quantity), 0);
-  const grandTotal = subtotal + (Number(shippingCost) || 0);
+  const grandTotal = subtotal;
 
-  // Save Invoice & Send directly to Collections (التحصيلات)
+  // Save a normal in-store retail invoice.
   const handleSaveInvoice = async () => {
     if (cart.length === 0) {
       alert('الرجاء إضافة منتج واحد على الأقل للفاتورة');
@@ -206,7 +148,7 @@ export function AddInvoiceModal({ isOpen, onClose, onSuccess }: AddInvoiceModalP
           const { data: newCustData } = await supabase.from('customers').insert({
             name: customerName.trim(),
             phone: customerPhone.trim() || null,
-            address: customerAddress.trim() || null
+            address: null
           }).select().single();
           if (newCustData) customerId = newCustData.id;
         }
@@ -226,15 +168,13 @@ export function AddInvoiceModal({ isOpen, onClose, onSuccess }: AddInvoiceModalP
       const orderRow = {
         id: invoiceId,
         total: grandTotal,
-        paid_amount: 0, // Sending to collections as pending collection
+        paid_amount: grandTotal,
         paid_cash: 0,
         type: 'sale',
         customer_id: customerId,
         payment_method: paymentMethod,
         cashier_name: activeCashier?.name || 'مدير النظام',
-        shipping_cost: Number(shippingCost) || 0,
-        shipping_carrier: shippingCompany,
-        notes: `منصة البيع: ${salesPlatform} | شركة الشحن: ${shippingCompany} | حالة التوصيل: ${deliveryStatus}`,
+        notes: 'بيع محل',
         created_at: createdIso
       };
 
@@ -254,65 +194,23 @@ export function AddInvoiceModal({ isOpen, onClose, onSuccess }: AddInvoiceModalP
         await supabase.from('products').update({ stock_quantity: newStock }).eq('id', item.product.id);
       }
 
-      // 4. 🔥 Immediate Insertion to Collections (`held_invoices` table for التحصيلات والطلبات المعلقة)
-      try {
-        await supabase.from('held_invoices').insert({
-          id: `COLLECT-${invoiceId}`,
-          customer_name: customerName.trim() || 'عميل تحصيل',
-          customer_phone: customerPhone.trim() || null,
-          customer_address: customerAddress.trim() || null,
-          items: orderItems,
-          total: grandTotal,
-          invoice_type: 'retail',
-          cashier_name: activeCashier?.name || 'مدير النظام',
-          status: deliveryStatus === 'delivered' ? 'delivered' : 'money_pending', // "تروح ع التحصيلات"
-          kind: 'online',
-          shipping_note: `${salesPlatform} - ${shippingCompany}`,
-          deposit: 0,
-          shipping_cost: Number(shippingCost) || 0,
-          notes: `تحصيل منصات: ${salesPlatform}`
-        });
-      } catch (e) {
-        console.warn('held_invoices collections notice:', e);
-      }
-
-      // 5. 🔥 Sync to Platform Collections (`platform_collections`) with Net Collection Amount
-      try {
-        await syncInvoiceToPlatformCollection({
-          id: invoiceId,
-          total: grandTotal,
-          paid_amount: 0,
-          customer_name: customerName.trim() || 'عميل',
-          notes: `تحصيل منصة: ${salesPlatform}`,
-          platform_name: salesPlatform,
-          items: orderItems,
-          is_collected: deliveryStatus === 'delivered'
-        } as any);
-      } catch (e) {
-        console.warn('platform_collections notice:', e);
-      }
 
       // Refresh store states
       useStore.setState(state => ({
         orders: [{
           id: invoiceId,
           total: grandTotal,
-          paid_amount: 0,
+          paid_amount: grandTotal,
           type: 'sale',
           cashier_name: activeCashier?.name || 'مدير النظام',
           date: createdIso,
           items: orderItems,
-          shipping_cost: Number(shippingCost) || 0,
-          shipping_carrier: shippingCompany,
           notes: orderRow.notes
         } as unknown as Order, ...state.orders]
       }));
 
-      await loadHeldInvoices();
-      await loadAllHeldInvoices();
-      await loadPlatformCollections();
 
-      alert(`تم إضافة الفاتورة #${invoiceId} بنجاح وتم توجيهها فوراً إلى قسم (التحصيلات والمنصات)!`);
+      alert(`تم إضافة الفاتورة #${invoiceId} بنجاح`);
       if (onSuccess) onSuccess();
       onClose();
     } catch (err: any) {
@@ -376,21 +274,7 @@ export function AddInvoiceModal({ isOpen, onClose, onSuccess }: AddInvoiceModalP
             </div>
           </div>
 
-          {/* Row 2: Address Textarea */}
-          <div>
-            <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1 flex items-center justify-end gap-1">
-              <span>العنوان</span>
-              <MapPin size={14} className="text-slate-500" />
-            </label>
-            <textarea
-              rows={2}
-              value={customerAddress}
-              onChange={(e) => setCustomerAddress(e.target.value)}
-              placeholder=""
-              className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-bold text-right resize-none"
-            />
-          </div>
-
+          {/* Product Section */}
           {/* Row 3: Product Section Header & Collection Filter */}
           <div className="pt-2 border-t border-slate-200 dark:border-slate-700 space-y-3">
             <div className="flex items-center justify-between">
@@ -471,40 +355,6 @@ export function AddInvoiceModal({ isOpen, onClose, onSuccess }: AddInvoiceModalP
               </select>
             )}
 
-            {/* Sales Platform & Quantity Row */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1 flex items-center justify-end gap-1">
-                  <span>منصة البيع</span>
-                  <Store size={14} className="text-slate-500" />
-                </label>
-                <select
-                  value={salesPlatform}
-                  onChange={(e) => setSalesPlatform(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-bold text-right"
-                >
-                  <option value="">اختر المنصة</option>
-                  {allDynamicPlatforms.map((p) => (
-                    <option key={p} value={p}>{p}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1 flex items-center justify-end gap-1">
-                  <span>الكمية</span>
-                  <Code size={14} className="text-slate-500" />
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  value={quantity}
-                  onChange={(e) => setQuantity(Number(e.target.value) || 1)}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-bold text-right"
-                />
-              </div>
-            </div>
-
             {/* Custom Price Field (Highlighted with Orange border matching mockup) */}
             <div>
               <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1 flex items-center justify-end gap-1">
@@ -563,75 +413,6 @@ export function AddInvoiceModal({ isOpen, onClose, onSuccess }: AddInvoiceModalP
             </div>
           )}
 
-          {/* Row 4: Shipping Company & Shipping Cost */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-200 dark:border-slate-700">
-            <div>
-              <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1 flex items-center justify-end gap-1">
-                <span>تكلفة الشحن (جنيه)</span>
-                <Truck size={14} className="text-slate-500" />
-              </label>
-              <input
-                type="number"
-                value={shippingCost}
-                onChange={(e) => setShippingCost(Number(e.target.value) || 0)}
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-bold text-right"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1 flex items-center justify-end gap-1">
-                <span>شركة الشحن</span>
-                <Truck size={14} className="text-slate-500" />
-              </label>
-              <select
-                value={shippingCompany}
-                onChange={(e) => setShippingCompany(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-bold text-right"
-              >
-                <option value="">اختر شركة الشحن</option>
-                {Array.from(new Set(['بوسطة (Bosta)', 'أرامكس (Aramex)', 'سمسا (SMSA)', 'فيديكس (FedEx)', ...customCarrierNames, 'شحن خاص / مندوب'])).map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Row 5: Delivery Status & Payment Method */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1 flex items-center justify-end gap-1">
-                <span>حالة التوصيل والتحصيل</span>
-                <Truck size={14} className="text-slate-500" />
-              </label>
-              <select
-                value={deliveryStatus}
-                onChange={(e) => setDeliveryStatus(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-bold text-right"
-              >
-                <option value="money_pending">قيد الانتظار (تحصيل)</option>
-                <option value="shipped">تم الشحن</option>
-                <option value="delivered">تم التسليم والتحصيل</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1 flex items-center justify-end gap-1">
-                <span>طريقة الدفع</span>
-                <CreditCard size={14} className="text-slate-500" />
-              </label>
-              <select
-                value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-bold text-right"
-              >
-                <option value="">اختر طريقة الدفع</option>
-                <option value="cash">نقداً (كاش)</option>
-                <option value="visa">فيزا (بطاقة إلكترونية)</option>
-                <option value="wallet">محفظة إلكترونية</option>
-                <option value="instapay">انستاباي InstaPay</option>
-              </select>
-            </div>
-          </div>
 
         </div>
 
@@ -644,7 +425,7 @@ export function AddInvoiceModal({ isOpen, onClose, onSuccess }: AddInvoiceModalP
             className="px-6 py-2.5 bg-[#425968] hover:bg-slate-700 text-white rounded-xl font-bold text-sm flex items-center gap-2 shadow transition disabled:opacity-50"
           >
             <Save size={16} />
-            <span>{isSaving ? 'جارٍ الحفظ والتحصيل...' : 'حفظ الفاتورة'}</span>
+            <span>{isSaving ? 'جارٍ الحفظ...' : 'حفظ الفاتورة'}</span>
           </button>
 
           <button
