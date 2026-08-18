@@ -1,0 +1,1222 @@
+import { useState, useMemo } from 'react';
+import { useStore } from '../../store/useStore';
+import { Plus, ArrowRightLeft, Search, User, Printer, CreditCard, FileText, Table as TableIcon, TrendingUp, Calendar, X, Trash2, Archive, Edit2, Eye, Undo2 } from 'lucide-react';
+import { normalizeArabic } from '../../utils/textUtils';
+import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
+import { calculateOrderReturnValue } from '../../utils/returns';
+import { EXTRA_PAYMENT_KEYS, isPaymentKeyEnabled, payLabelOf } from '../../utils/paymentMethods';
+import * as XLSX from 'xlsx';
+
+import jsPDF from 'jspdf';
+// html2canvas-pro يدعم ألوان oklch() في Tailwind v4 (النسخة الأصلية تفشل معها وتكسر تصدير PDF).
+import html2canvas from 'html2canvas-pro';
+import { EditInvoiceModal } from '../../components/EditInvoiceModal';
+import { AddInvoiceModal } from '../../components/AddInvoiceModal';
+import { printShippingLabel } from '../../utils/printShippingLabel';
+
+export default function Invoices() {
+  const { orders, storeSettings, deleteOrder, undoReturn, processReturn, syncInvoiceToPlatformCollection } = useStore();
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState<'all' | 'sales' | 'returns' | 'deferred' | 'exchange' | 'deleted'>('all');
+  const [selectedDay, setSelectedDay] = useState<string>('');
+
+  const [dateBasis, setDateBasis] = useState<'invoice' | 'refund' | 'exchange'>('invoice');
+  const [selectedMonth, setSelectedMonth] = useState<string>('all');
+  const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
+  const [selectedCashier, setSelectedCashier] = useState<string>('all');
+  const [selectedSalesperson, setSelectedSalesperson] = useState<string>('all');
+  const [loading, setLoading] = useState(false);
+  const [editingOrder, setEditingOrder] = useState<any | null>(null);
+
+  // ── Modal State for Partial & Full Invoices Return ──
+  const [showSelectInvoiceForReturnModal, setShowSelectInvoiceForReturnModal] = useState(false);
+  const [returnInvoiceSearch, setReturnInvoiceSearch] = useState('');
+  const [returnOrder, setReturnOrder] = useState<any | null>(null);
+  const [returnQtys, setReturnQtys] = useState<Record<string, number>>({});
+  const [refundMethod, setRefundMethod] = useState<string>('cash');
+  const [refundFee, setRefundFee] = useState<number>(0);
+  const [isSubmittingReturn, setIsSubmittingReturn] = useState(false);
+
+  const openReturnModal = (ord: any) => {
+    setReturnOrder(ord);
+    const initialQtys: Record<string, number> = {};
+    (ord.items || []).forEach((it: any) => {
+      const key = it.product_id || it.id;
+      initialQtys[key] = 0;
+    });
+    setReturnQtys(initialQtys);
+    setRefundMethod(ord.customer?.debt && ord.customer.debt > 0 ? 'debt' : 'cash');
+    setRefundFee(0);
+  };
+
+  const handleProcessReturnSubmit = async () => {
+    if (!returnOrder) return;
+    const items = returnOrder.items || [];
+    
+    const returnsArray = items
+      .map((it: any) => {
+        const key = it.product_id || it.id;
+        const qty = returnQtys[key] || 0;
+        const salePrice = Number(it.sale_price) || 0;
+        return {
+          productId: key,
+          returnQty: qty,
+          refundAmount: qty * salePrice,
+        };
+      })
+      .filter((r: any) => r.returnQty > 0);
+
+    if (returnsArray.length === 0) {
+      alert('برجاء تحديد كمية المرتجع لصنف واحد على الأقل.');
+      return;
+    }
+
+    setIsSubmittingReturn(true);
+    try {
+      const ok = await processReturn(
+        returnOrder.id,
+        returnsArray,
+        refundMethod,
+        undefined,
+        { deduction: refundFee }
+      );
+
+      if (ok) {
+        // Sync updated expected amount to platform collections table
+        const updatedOrd = useStore.getState().orders.find((o) => o.id === returnOrder.id);
+        if (updatedOrd) {
+          void syncInvoiceToPlatformCollection({
+            id: String(updatedOrd.id),
+            total: updatedOrd.total,
+            paid_amount: updatedOrd.paid_amount,
+            customer_name: updatedOrd.customer?.name,
+            notes: updatedOrd.notes || undefined
+          });
+        }
+
+        alert('تم تسجيل المرتجع وتعديل المخزن والحسابات والديون بنجاح! ✅');
+        setReturnOrder(null);
+      } else {
+        alert('حدث خطأ أثناء تنفيذ المرتجع. يرجى إعادة المحاولة.');
+      }
+    } catch (err: any) {
+      alert('خطأ أثناء الإرجاع: ' + (err?.message || err));
+    } finally {
+      setIsSubmittingReturn(false);
+    }
+  };
+
+  const activeOrders = useMemo(() => orders.filter((order) => !order.is_deleted), [orders]);
+  const deletedOrders = useMemo(() => orders.filter((order) => order.is_deleted), [orders]);
+
+  const salesInvoicesCount = useMemo(() => {
+    return activeOrders.filter((o) => {
+      const returnedVal = calculateOrderReturnValue(o);
+      const debt = (o.type === 'payment' ? 0 : Math.max(0, o.total - returnedVal)) - (o.paid_amount || 0);
+      return o.type === 'sale' && returnedVal <= 0 && debt <= 0.009;
+    }).length;
+  }, [activeOrders]);
+
+  const returnsInvoicesCount = useMemo(() => {
+    return activeOrders.filter((o) => calculateOrderReturnValue(o) > 0 || (o.items || []).some(i => i.returned_quantity > 0)).length;
+  }, [activeOrders]);
+
+  const deferredInvoicesCount = useMemo(() => {
+    return activeOrders.filter((o) => o.type !== 'payment' && (o.total - calculateOrderReturnValue(o) - (o.paid_amount || 0)) > 0.009).length;
+  }, [activeOrders]);
+
+  const exchangeInvoicesCount = useMemo(() => {
+    return activeOrders.filter((o) => !!(o as any).exchange_data).length;
+  }, [activeOrders]);
+
+  const matchingInvoicesForReturn = useMemo(() => {
+    if (!returnInvoiceSearch.trim()) return activeOrders.filter(o => o.type === 'sale');
+    const q = normalizeArabic(returnInvoiceSearch.trim().toLowerCase());
+    return activeOrders.filter(o => {
+      if (o.type !== 'sale') return false;
+      const matchId = String(o.id).toLowerCase().includes(q);
+      const matchCust = normalizeArabic(o.customer?.name || '').toLowerCase().includes(q);
+      const matchPhone = String(o.customer?.phone || '').includes(q);
+      return matchId || matchCust || matchPhone;
+    });
+  }, [activeOrders, returnInvoiceSearch]);
+
+  const handlePrint = (order: any) => {
+    void printShippingLabel(order, storeSettings);
+  };
+
+  const handleSendWhatsApp = (order: any) => {
+    const customerPhone = order.customer?.phone || '';
+    if (!customerPhone) {
+      alert('لا يوجد رقم هاتف مسجل لهذا العميل لإرسال الفاتورة عبر واتساب.');
+      return;
+    }
+
+    const isPayment = order.type === 'payment';
+    const invoiceLink = `${window.location.origin}/view-invoice/${order.id}`;
+    let message = '';
+    
+    if (isPayment) {
+      message = `*إيصال سداد مديونية من ${storeSettings.name}*\n\n` +
+        `*رقم الإيصال:* #${order.id}\n` +
+        `*التاريخ:* ${new Date(order.created_at || order.date).toLocaleString('ar-EG', { calendar: 'gregory' })}\n` +
+        `*المبلغ المسدد:* ${order.paid_amount.toFixed(2)} ${storeSettings.currency}\n\n` +
+        `*عرض التفاصيل:*\n${invoiceLink}\n\n` +
+        (order.notes ? `*ملاحظات:* ${order.notes}\n\n` : '') +
+        `*شكراً لتعاملكم معنا!*`;
+    } else {
+      const itemsText = order.items.map((item: any) => `• ${item.name} (عدد: ${item.quantity}) - ${(item.sale_price * item.quantity).toFixed(2)} ${storeSettings.currency}`).join('\n');
+      const branchAddress = storeSettings.address || '';
+      const branchLocationLink = storeSettings.locationUrl || '';
+      message = `*فاتورة جديدة من ${storeSettings.name}*\n\n` +
+        `*رقم الفاتورة:* #${order.id}\n` +
+        `*التاريخ:* ${new Date(order.created_at || order.date).toLocaleString('ar-EG', { calendar: 'gregory' })}\n` +
+        `*الإجمالي:* ${order.total.toFixed(2)} ${storeSettings.currency}\n\n` +
+        `*عرض الفاتورة بالتفاصيل:*\n${invoiceLink}\n\n` +
+        `*تفاصيل الطلب:*\n${itemsText}\n\n` +
+        (branchAddress ? `*عنوان الفرع:* ${branchAddress}\n` : '') +
+        (branchLocationLink ? `*لوكيشن الفرع على Google Maps:*\n${branchLocationLink}\n` : '') +
+        `${(storeSettings.phone || storeSettings.phone2) ? `*للتواصل أو الشحن:* ${[storeSettings.phone, storeSettings.phone2].filter(Boolean).join(' - ')}\nيمكنكم التواصل هاتفيا أو واتساب، أو زيارة الفرع على العنوان الموضح.\n` : ''}` +
+        `\n*شكراً لتعاملكم معنا، في انتظاركم مرة أخرى!*\n` +
+        `*ما رأيك في خدمتنا؟ نسعد بتلقي ملاحظاتك.*`;
+    }
+
+    let cleanPhone = customerPhone.replace(/\D/g, '');
+    const code = storeSettings.whatsappCountryCode || '2';
+
+    if (cleanPhone.startsWith('0')) {
+      cleanPhone = code + cleanPhone.substring(1);
+    } else if (!cleanPhone.startsWith(code)) {
+      cleanPhone = code + cleanPhone;
+    }
+
+    const encodedMsg = encodeURIComponent(message);
+    window.open(`https://wa.me/${cleanPhone}?text=${encodedMsg}`, '_blank');
+  };
+
+  // Extract unique years from orders
+  const years = useMemo(() => {
+    const y = new Set<string>();
+    activeOrders.forEach(o => y.add(new Date(o.date).getFullYear().toString()));
+    return Array.from(y).sort((a, b) => parseInt(b) - parseInt(a));
+  }, [activeOrders]);
+
+  // Extract unique cashiers from orders
+  const uniqueCashiers = useMemo(() => {
+    const c = new Set<string>();
+    activeOrders.forEach(o => {
+      if (o.cashier_name) c.add(o.cashier_name);
+    });
+    return Array.from(c).sort();
+  }, [activeOrders]);
+
+  // Extract unique salespeople from orders
+  const uniqueSalespeople = useMemo(() => {
+    const s = new Set<string>();
+    activeOrders.forEach(o => { if ((o as any).salesperson_name) s.add((o as any).salesperson_name); });
+    return Array.from(s).sort();
+  }, [activeOrders]);
+
+  // إلغاء مرتجع اتعمل بالغلط. بيتحقق من **يوم المرتجع** مش يوم الفاتورة، فمرتجع
+  // اتعمل النهاردة على فاتورة قديمة (يومها مقفول) ينفع يتلغى عادي.
+  const handleUndoReturn = async (order: any) => {
+    const refunded = (order.items || []).reduce((s: number, it: any) => s + (Number(it.refunded_amount) || 0), 0);
+    const qty = (order.items || []).reduce((s: number, it: any) => s + (Number(it.returned_quantity) || 0), 0);
+    const message = [
+      `إلغاء مرتجع الفاتورة #${order.id}؟`,
+      '',
+      `• هيترجع ${qty} صنف للفاتورة ويتشال من المخزون`,
+      ...(refunded > 0 ? [`• هيرجع ${refunded.toFixed(2)} ${storeSettings.currency} للمدفوع (الفلوس اللي اتردّت للعميل)`] : []),
+      '',
+      'الفاتورة هترجع لحالتها قبل الإرجاع بالظبط.',
+    ].join('\n');
+    if (!confirm(message)) return;
+    const ok = await undoReturn(order.id);
+    if (ok) alert('تم إلغاء المرتجع ورجعت الفاتورة لحالتها الأصلية.');
+  };
+
+  const handleDeleteOrder = async (order: any) => {
+    const message = [
+      `هل أنت متأكد من حذف الفاتورة #${order.id}؟`,
+      '',
+      'مسح الفاتورة سيحذف تأثيرها من الإيراد والربح والمديونية، ويرجع المنتجات غير المرتجعة إلى المخزون.',
+      'ستظل الفاتورة ظاهرة في بروفايل العميل كفاتورة محذوفة، وستظهر في سلة المهملات للعرض فقط بدون استرجاع.',
+    ].join('\n');
+
+    if (!confirm(message)) return;
+
+    const ok = await deleteOrder(order.id, 'حذف يدوي بسبب فاتورة خاطئة');
+    alert(ok ? 'تم حذف الفاتورة ونقلها إلى سلة المهملات.' : 'تعذر حذف الفاتورة. تأكد من تشغيل تحديث قاعدة البيانات ثم حاول مرة أخرى.');
+  };
+
+  const exportExcel = () => {
+    const extraCols = EXTRA_PAYMENT_KEYS.filter((k) => isPaymentKeyEnabled(storeSettings as any, k));
+    const wsData = [
+      ['تقرير الفواتير', '', '', '', '', '', '', ''],
+      ['التاريخ', new Date().toLocaleDateString(), '', '', '', '', '', ''],
+      [''],
+      ['رقم الفاتورة', 'العميل', 'التاريخ', 'تاريخ المرتجع', 'تاريخ الاستبدال', 'الإجمالي', 'المدفوع', 'كاش', 'فيزا', 'محفظة', 'انستا', ...extraCols.map((k) => payLabelOf(storeSettings as any, k)), 'الباقي', 'النوع'],
+      ...filteredOrders.map(o => [
+        o.id,
+        o.customer?.name || 'عميل نقدي',
+        new Date(o.date).toLocaleString('ar-EG', { calendar: 'gregory' }),
+        (o as any).refunded_at ? new Date((o as any).refunded_at).toLocaleString('ar-EG', { calendar: 'gregory' }) : '',
+        (o as any).exchange_data?.date ? new Date((o as any).exchange_data.date).toLocaleString('ar-EG', { calendar: 'gregory' }) : '',
+        o.total,
+        o.paid_amount,
+        o.paid_cash,
+        o.paid_visa,
+        o.paid_wallet,
+        o.paid_instapay,
+        ...extraCols.map((k) => (o as any)['paid_' + k] || 0),
+        o.type === 'payment' ? 0 : Math.max(0, o.total - o.paid_amount),
+        o.type === 'payment' ? 'سداد' : 'بيع'
+      ])
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Invoices');
+    XLSX.writeFile(wb, `invoices_report_${new Date().toLocaleDateString()}.xlsx`);
+  };
+
+  const exportPDF = async () => {
+    const element = document.getElementById('invoices-table');
+    if (!element) return;
+    
+    setLoading(true);
+    
+    try {
+      const canvas = await html2canvas(element, { 
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        windowWidth: element.scrollWidth,
+        windowHeight: element.scrollHeight,
+        onclone: (clonedDoc) => {
+          const el = clonedDoc.getElementById('invoices-table');
+          if (el) {
+            el.style.height = 'auto';
+            el.style.overflow = 'visible';
+          }
+        }
+      });
+      
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pdfWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      // Add the first page
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pdfHeight;
+
+      // Add additional pages if needed
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pdfHeight;
+      }
+      
+      pdf.save(`invoices_report_${new Date().toLocaleDateString()}.pdf`);
+    } catch (error) {
+      console.error('PDF Export Error:', error);
+      alert('حدث خطأ أثناء تصدير ملف PDF');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredOrders = useMemo(() => {
+    const source = activeTab === 'deleted' ? deletedOrders : activeOrders;
+
+    return source.filter((o) => {
+      // 1. Tab Scoping
+      if (activeTab === 'sales') {
+        const returnedVal = calculateOrderReturnValue(o);
+        const debt = (o.type === 'payment' ? 0 : Math.max(0, o.total - returnedVal)) - (o.paid_amount || 0);
+        if (returnedVal > 0 || debt > 0.009 || o.type === 'payment') return false;
+      } else if (activeTab === 'returns') {
+        const returnedVal = calculateOrderReturnValue(o);
+        const hasRetItem = (o.items || []).some((i) => i.returned_quantity > 0);
+        if (returnedVal <= 0 && !hasRetItem) return false;
+      } else if (activeTab === 'deferred') {
+        const returnedVal = calculateOrderReturnValue(o);
+        const debt = (o.type === 'payment' ? 0 : Math.max(0, o.total - returnedVal)) - (o.paid_amount || 0);
+        if (debt <= 0.009) return false;
+      } else if (activeTab === 'exchange') {
+        if (!(o as any).exchange_data) return false;
+      }
+
+      // 2. Date Basis & Date Filters
+      const refundedAt = (o as any).refunded_at as string | null | undefined;
+      const exchangedAt = (o as any).exchange_data?.date as string | null | undefined;
+      if (dateBasis === 'refund' && !refundedAt) return false;
+      if (dateBasis === 'exchange' && !exchangedAt) return false;
+
+      const orderDate = new Date(
+        dateBasis === 'refund' ? refundedAt! : dateBasis === 'exchange' ? exchangedAt! : o.date
+      );
+      const orderDay = [
+        orderDate.getFullYear(),
+        String(orderDate.getMonth() + 1).padStart(2, '0'),
+        String(orderDate.getDate()).padStart(2, '0')
+      ].join('-');
+
+      const matchesDay = !selectedDay || orderDay === selectedDay;
+      const matchesMonth = selectedMonth === 'all' || (orderDate.getMonth() + 1).toString() === selectedMonth;
+      const matchesYear = selectedYear === 'all' || orderDate.getFullYear().toString() === selectedYear;
+
+      const searchStr = searchQuery.toLowerCase();
+      const matchesSearch = 
+        o.id.toLowerCase().includes(searchStr) || 
+        normalizeArabic(o.customer?.name || '').includes(normalizeArabic(searchStr)) ||
+        (o.customer?.phone || '').includes(searchStr);
+
+      const matchesCashier = selectedCashier === 'all' || o.cashier_name === selectedCashier;
+      const matchesSalesperson = selectedSalesperson === 'all' || (o as any).salesperson_name === selectedSalesperson;
+
+      return matchesDay && matchesMonth && matchesYear && matchesSearch && matchesCashier && matchesSalesperson;
+    });
+  }, [activeOrders, deletedOrders, activeTab, dateBasis, selectedDay, selectedMonth, selectedYear, searchQuery, selectedCashier, selectedSalesperson]);
+
+  const totalInvoiceProfit = useMemo(() => {
+    return filteredOrders.reduce((sum, order) => sum + calculateInvoiceProfit(order), 0);
+  }, [filteredOrders]);
+
+  // تقرير مبيعات/أرباح كل مسؤول مبيعات في الفترة المفلترة (كشف عمولة)
+  const salespersonReport = useMemo(() => {
+    const map = new Map<string, { name: string; count: number; sales: number; profit: number }>();
+    filteredOrders.forEach((o) => {
+      const name = (o as any).salesperson_name;
+      if (!name || o.type === 'payment' || o.is_deleted) return;
+      const cur = map.get(name) || { name, count: 0, sales: 0, profit: 0 };
+      cur.count += 1;
+      cur.sales += Number(o.total) || 0;
+      cur.profit += calculateInvoiceProfit(o);
+      map.set(name, cur);
+    });
+    return Array.from(map.values()).sort((a, b) => b.sales - a.sales);
+  }, [filteredOrders]);
+
+  return (
+    <div className="p-4 md:p-8">
+      <div className="flex flex-wrap gap-3 justify-between items-end mb-8">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-black text-slate-800 dark:text-slate-100">فواتير البيع والمرتجعات</h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-2">مراجعة فواتير البيع وعمليات الاسترجاع مع الفلاتر المتقدمة</p>
+        </div>
+        <div className="flex gap-2 flex-wrap items-center">
+          <button 
+            type="button"
+            onClick={() => setShowSelectInvoiceForReturnModal(true)}
+            className="flex items-center gap-2 bg-gradient-to-r from-orange-600 to-amber-600 text-white px-5 py-2.5 rounded-xl font-black transition shadow-lg hover:opacity-95 text-sm cursor-pointer"
+          >
+            <ArrowRightLeft size={18} /> + إجراء عملية مرتجع جديدة
+          </button>
+          <button 
+            type="button"
+            onClick={() => setShowAddModal(true)}
+            style={{ backgroundColor: storeSettings.themeColor }}
+            className="flex items-center gap-2 text-white px-5 py-2.5 rounded-xl font-bold transition shadow-lg hover:opacity-90 text-sm cursor-pointer"
+          >
+            <Plus size={18} /> إنشاء فاتورة مستقلة جديدة
+          </button>
+          <button 
+            onClick={exportExcel}
+            className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-emerald-700 transition shadow-lg text-sm"
+          >
+            <TableIcon size={18} /> Excel
+          </button>
+          <button 
+            onClick={exportPDF}
+            className="flex items-center gap-2 bg-red-600 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-red-700 transition shadow-lg disabled:opacity-50 text-sm"
+            disabled={loading}
+          >
+            {loading ? '...جاري التصدير' : <><FileText size={18} /> PDF</>}
+          </button>
+        </div>
+      </div>
+
+      <div id="invoices-table" className="bg-white dark:bg-slate-800 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden flex flex-col min-h-[500px]">
+        {/* Advanced Filters */}
+        <div className="p-5 border-b border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 grid grid-cols-1 xl:grid-cols-5 gap-4 items-center">
+          <div className="relative xl:col-span-2">
+            <Search className="absolute right-4 top-3 text-slate-400" size={20} />
+            <input
+              type="text"
+              placeholder="ابحث برقم الفاتورة، اسم العميل، أو رقم الهاتف..."
+              style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any}
+              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-xl py-2.5 pr-12 pl-4 text-sm focus:outline-none focus:ring-2 shadow-sm transition"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          
+          <div className="flex flex-wrap gap-3 xl:col-span-3 justify-end items-center">
+            {/* أساس التاريخ — بيحدد الفلاتر اللي جنبه (يوم/شهر/سنة) تتطبّق على إيه */}
+            <div className="flex items-center bg-slate-100 dark:bg-slate-900 rounded-xl p-1 gap-1">
+              <button
+                onClick={() => setDateBasis('invoice')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition ${
+                  dateBasis === 'invoice' ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+                title="فلترة اليوم/الشهر/السنة على تاريخ الفاتورة"
+              >
+                تاريخ الفاتورة
+              </button>
+              <button
+                onClick={() => setDateBasis('refund')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition ${
+                  dateBasis === 'refund' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+                title="عرض الفواتير المُرتجعة فقط، مفلترة بيوم الاسترجاع نفسه"
+              >
+                تاريخ المرتجع
+              </button>
+              <button
+                onClick={() => setDateBasis('exchange')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition ${
+                  dateBasis === 'exchange' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+                title="عرض فواتير الاستبدال فقط، مفلترة بيوم الاستبدال نفسه"
+              >
+                تاريخ الاستبدال
+              </button>
+            </div>
+            <div className="relative">
+              <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+              <input
+                type="date"
+                value={selectedDay}
+                onChange={e => setSelectedDay(e.target.value)}
+                style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any}
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white rounded-xl py-2.5 pr-10 pl-10 text-sm focus:ring-2 outline-none min-w-[155px]"
+              />
+              {selectedDay && (
+                <button
+                  onClick={() => setSelectedDay('')}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 p-1 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition"
+                  title="كل الأيام"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            <select 
+              value={selectedMonth} 
+              onChange={e => setSelectedMonth(e.target.value)} 
+              style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-200 rounded-xl p-2.5 text-sm focus:ring-2 outline-none"
+            >
+              <option value="all">كل الشهور</option>
+              {Array.from({ length: 12 }, (_, i) => (
+                <option key={i+1} value={(i+1).toString()}>{`شهر ${i+1}`}</option>
+              ))}
+            </select>
+
+            <select 
+              value={selectedYear} 
+              onChange={e => setSelectedYear(e.target.value)} 
+              style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-200 rounded-xl p-2.5 text-sm focus:ring-2 outline-none"
+            >
+              <option value="all">كل السنوات</option>
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+
+            <select 
+              value={selectedCashier} 
+              onChange={e => setSelectedCashier(e.target.value)} 
+              style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-200 rounded-xl p-2.5 text-sm focus:ring-2 outline-none"
+            >
+              <option value="all">كل المحاسبين</option>
+              {uniqueCashiers.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+
+            <select
+              value={selectedSalesperson}
+              onChange={e => setSelectedSalesperson(e.target.value)}
+              style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-200 rounded-xl p-2.5 text-sm focus:ring-2 outline-none"
+            >
+              <option value="all">كل مسؤولي المبيعات</option>
+              {uniqueSalespeople.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* ── Main Category Tabs Navigation ── */}
+        <div className="p-5 border-b border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800 space-y-4">
+          <div className="bg-slate-100 dark:bg-slate-900/80 p-1.5 rounded-2xl flex flex-wrap items-center gap-1 border border-slate-200/80 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => { setActiveTab('all'); setDateBasis('invoice'); }}
+              className={`flex-1 min-w-[130px] flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-black text-xs md:text-sm transition-all ${
+                activeTab === 'all'
+                  ? 'bg-slate-900 text-white shadow-md'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-white/50'
+              }`}
+            >
+              <FileText size={16} /> كل الفواتير ({activeOrders.length})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setActiveTab('sales'); setDateBasis('invoice'); }}
+              className={`flex-1 min-w-[130px] flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-black text-xs md:text-sm transition-all ${
+                activeTab === 'sales'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40'
+              }`}
+            >
+              🛒 فواتير البيع ({salesInvoicesCount})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setActiveTab('returns'); setDateBasis('refund'); }}
+              className={`flex-1 min-w-[130px] flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-black text-xs md:text-sm transition-all ${
+                activeTab === 'returns'
+                  ? 'bg-orange-600 text-white shadow-md'
+                  : 'text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950/40'
+              }`}
+            >
+              ↩️ المرتجعات ({returnsInvoicesCount})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setActiveTab('deferred'); setDateBasis('invoice'); }}
+              className={`flex-1 min-w-[130px] flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-black text-xs md:text-sm transition-all ${
+                activeTab === 'deferred'
+                  ? 'bg-rose-600 text-white shadow-md'
+                  : 'text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40'
+              }`}
+            >
+              💳 الآجل والديون ({deferredInvoicesCount})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setActiveTab('exchange'); setDateBasis('exchange'); }}
+              className={`flex-1 min-w-[130px] flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-black text-xs md:text-sm transition-all ${
+                activeTab === 'exchange'
+                  ? 'bg-amber-600 text-white shadow-md'
+                  : 'text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40'
+              }`}
+            >
+              🔄 الاستبدال ({exchangeInvoicesCount})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setActiveTab('deleted'); setDateBasis('invoice'); }}
+              className={`flex-1 min-w-[130px] flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-black text-xs md:text-sm transition-all ${
+                activeTab === 'deleted'
+                  ? 'bg-red-700 text-white shadow-md'
+                  : 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40'
+              }`}
+            >
+              <Archive size={16} /> سلة المهملات ({deletedOrders.length})
+            </button>
+          </div>
+
+          {/* Dynamic Summary Cards for Active Tab */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div
+              style={{ backgroundColor: storeSettings.themeColor + '10', borderColor: storeSettings.themeColor + '25' }}
+              className="rounded-2xl border p-4"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[11px] font-black text-slate-500 dark:text-slate-400">عدد النتائج المعروضة</p>
+                <FileText size={18} style={{ color: storeSettings.themeColor }} />
+              </div>
+              <p className="text-2xl font-black mt-2" style={{ color: storeSettings.themeColor }}>{filteredOrders.length}</p>
+            </div>
+
+            <div className="rounded-2xl border border-emerald-100 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-950/40 p-4 text-emerald-700 dark:text-emerald-300">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[11px] font-black text-emerald-600 dark:text-emerald-400">إجمالي الأرباح الصافية</p>
+                <TrendingUp size={18} />
+              </div>
+              <p className="text-2xl font-black mt-2">{totalInvoiceProfit.toFixed(2)} <span className="text-xs">{storeSettings.currency}</span></p>
+            </div>
+
+            <div className="rounded-2xl border border-orange-100 dark:border-orange-900/50 bg-orange-50 dark:bg-orange-950/40 p-4 text-orange-700 dark:text-orange-300">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[11px] font-black text-orange-600 dark:text-orange-400">إجمالي قيمة المرتجعات المعروضة</p>
+                <ArrowRightLeft size={18} />
+              </div>
+              <p className="text-2xl font-black mt-2">
+                {filteredOrders.reduce((sum, o) => sum + calculateOrderReturnValue(o), 0).toFixed(2)} <span className="text-xs">{storeSettings.currency}</span>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {salespersonReport.length > 0 && (
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-purple-100 dark:border-purple-900/50 shadow-sm mb-6 overflow-hidden">
+            <div className="px-5 py-3 bg-purple-50 dark:bg-purple-950/40 border-b border-purple-100 dark:border-purple-900/50 flex items-center gap-2">
+              <User size={18} className="text-purple-600 dark:text-purple-400" />
+              <h3 className="font-black text-purple-800 dark:text-purple-300">كشف مبيعات وأرباح مسؤولي المبيعات (الفترة المعروضة)</h3>
+            </div>
+            <div className="overflow-x-auto">
+            <table className="w-full text-right text-sm">
+              <thead className="bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-400 font-bold">
+                <tr>
+                  <th className="p-3">مسؤول المبيعات</th>
+                  <th className="p-3 text-center">عدد الفواتير</th>
+                  <th className="p-3 text-center">إجمالي المبيعات</th>
+                  <th className="p-3 text-center text-emerald-600 dark:text-emerald-400">إجمالي الأرباح</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50 dark:divide-slate-700">
+                {salespersonReport.map((r) => (
+                  <tr key={r.name} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                    <td className="p-3 font-black text-slate-800 dark:text-white">{r.name}</td>
+                    <td className="p-3 text-center font-bold text-slate-600 dark:text-slate-300">{r.count}</td>
+                    <td className="p-3 text-center font-black text-indigo-600 dark:text-indigo-400">{r.sales.toFixed(2)} {storeSettings.currency}</td>
+                    <td className="p-3 text-center font-black text-emerald-600 dark:text-emerald-400">{r.profit.toFixed(2)} {storeSettings.currency}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+          </div>
+        )}
+
+        <div className="flex-1 overflow-x-auto">
+          <table className="w-full text-right text-sm">
+            <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700 text-slate-400 dark:text-slate-400 font-medium">
+              <tr>
+                <th className="p-4">رقم الفاتورة</th>
+                <th className="p-4">بيانات العميل</th>
+                <th className="p-4">التاريخ والوقت</th>
+                <th className="p-4">تاريخ المرتجع</th>
+                <th className="p-4">تاريخ الاستبدال</th>
+                <th className="p-4 text-center">المسؤول</th>
+                <th className="p-4 text-center">مسؤول المبيعات</th>
+                <th className="p-4">تفاصيل المنتجات</th>
+                <th className="p-4 text-center border-x border-slate-100 dark:border-slate-700 bg-slate-100/50 dark:bg-slate-900/50">الإجمالي</th>
+                <th className="p-4 text-center text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/30">الربح</th>
+                <th className="p-4 text-center text-orange-600 dark:text-orange-400">قيمة المرتجع</th>
+                <th className="p-4 text-center text-green-600 dark:text-green-400">المدفوع</th>
+                <th className="p-4 text-center text-red-500 font-black">الباقي عليه</th>
+                <th className="p-4 text-center">الحالة</th>
+                <th className="p-4 text-center">إجراءات</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-200">
+              {filteredOrders.length === 0 ? (
+                <tr>
+                  <td colSpan={15} className="p-12 text-center text-slate-400 text-lg font-bold">
+                    لا يوجد فواتير تطابق بحثك حالياً.
+                  </td>
+                </tr>
+              ) : (
+                filteredOrders.map((order) => {
+                  const hasReturns = order.items.some(i => i.returned_quantity > 0);
+                  const returnedValue = calculateOrderReturnValue(order);
+                  const effectiveDebt = order.type === 'payment' ? 0 : Math.max(0, order.total - order.paid_amount);
+
+                  // Calculate Profit
+                  const profit = calculateInvoiceProfit(order);
+
+                  return (
+                    <tr key={order.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800 transition ${order.is_deleted ? 'bg-red-50/40 opacity-80' : hasReturns ? 'bg-red-50/20' : ''}`}>
+                      <td className="p-4 font-mono font-bold" style={{ color: storeSettings.themeColor }}>{order.id}</td>
+                      <td className="p-4">
+                        {order.customer ? (
+                          <div className="flex flex-col">
+                            <span className="font-bold flex items-center gap-1"><User size={14} style={{ color: storeSettings.themeColor }} /> {order.customer.name}</span>
+                            <span className="text-xs text-slate-500 dark:text-slate-400 font-mono mt-1" dir="ltr">{order.customer.phone}</span>
+                            {(() => {
+                              const cDebt = activeOrders.filter(o => o.customer?.id === order.customer!.id)
+                                .reduce((sum, o) => {
+                                  if (o.type === 'payment' && o.notes?.includes('سداد أجل للفاتورة رقم')) {
+                                    return sum;
+                                  }
+                                  const eTotal = o.type === 'payment' ? 0 : o.total;
+                                  return sum + (eTotal - o.paid_amount);
+                                }, 0);
+                              return cDebt > 0 ? (
+                                <span className="text-[10px] font-black text-red-500 mt-1 bg-red-50 dark:bg-red-500/10 px-2 py-0.5 rounded border border-red-100 dark:border-red-500/30 w-fit">إجمالي الأجل: {cDebt.toFixed(2)}</span>
+                              ) : null;
+                            })()}
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 text-xs font-bold bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded">عميل نقدي</span>
+                        )}
+                      </td>
+                      <td className="p-4 text-slate-500 dark:text-slate-400">{new Date(order.date).toLocaleString('ar-EG', { calendar: 'gregory' })}</td>
+                      <td className="p-4">
+                        {(() => {
+                          const refundedAt = (order as any).refunded_at as string | null | undefined;
+                          // فاتورة فيها مرتجع من غير refunded_at = استرجاع اتعمل قبل db/36،
+                          // فمفيش تاريخ متسجّل ليه أصلاً.
+                          if (!refundedAt) {
+                            return hasReturns
+                              ? <span className="text-[10px] font-bold text-slate-400">غير مسجّل</span>
+                              : <span className="text-slate-300">—</span>;
+                          }
+                          const sameDay = new Date(refundedAt).toDateString() === new Date(order.date).toDateString();
+                          return (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs font-black text-rose-600 dark:text-rose-400">
+                                {new Date(refundedAt).toLocaleString('ar-EG', { calendar: 'gregory' })}
+                              </span>
+                              {!sameDay && (
+                                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-100 dark:border-amber-500/30 w-fit">
+                                  يوم مختلف عن الفاتورة
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td className="p-4">
+                        {(() => {
+                          const xd = (order as any).exchange_data;
+                          if (!xd) return <span className="text-slate-300">—</span>;
+                          // استبدال قديم اتسجّل قبل ما exchange_data تحمل date.
+                          if (!xd.date) return <span className="text-[10px] font-bold text-slate-400">غير مسجّل</span>;
+                          const sameDay = new Date(xd.date).toDateString() === new Date(order.date).toDateString();
+                          return (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs font-black text-amber-600 dark:text-amber-400">
+                                {new Date(xd.date).toLocaleString('ar-EG', { calendar: 'gregory' })}
+                              </span>
+                              {!sameDay && (
+                                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-100 dark:border-amber-500/30 w-fit">
+                                  يوم مختلف عن الفاتورة
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td className="p-4 text-center font-bold text-indigo-600">{order.cashier_name || 'غير معروف'}</td>
+                      <td className="p-4 text-center font-bold text-purple-600">
+                        {(order as any).salesperson_name || '—'}
+                        {(order as any).exchange_data && <div className="mt-1"><span className="text-[10px] font-black bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full">↺ استبدال</span></div>}
+                      </td>
+                      <td className="p-4 text-right">
+                        {order.is_deleted ? (
+                          <span className="inline-flex items-center gap-1 bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400 px-3 py-1 rounded-lg text-xs font-bold">
+                            <Archive size={14} /> فاتورة محذوفة
+                          </span>
+                        ) : order.type === 'payment' ? (
+                          <div className="flex items-center gap-2 text-indigo-600 font-bold">
+                            <CreditCard size={14} /> سداد مديونية آجل
+                          </div>
+                        ) : (
+                          <ul className="space-y-1">
+                            {order.items.map(i => (
+                              <li key={i.id} className={`flex items-center gap-2 ${i.returned_quantity > 0 ? 'text-red-500' : ''}`}>
+                                • {i.name} <span className="text-xs text-slate-400">(الكمية: {i.quantity})</span> 
+                                {i.returned_quantity > 0 && <span className="font-bold text-[10px] bg-red-100 dark:bg-red-500/20 px-1.5 py-0.5 rounded text-red-600 dark:text-red-400">مرتجع: {i.returned_quantity}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </td>
+                       <td className="p-4 text-center font-black border-x border-slate-100 dark:border-slate-800 bg-slate-50/50" style={order.type === 'payment' ? { color: storeSettings.themeColor } : {}}>
+                        {order.type === 'payment' ? `+ ${order.paid_amount.toFixed(2)}` : order.total.toFixed(2)} {storeSettings.currency}
+                      </td>
+                      <td className={`p-4 text-center font-black ${
+                        profit >= 0 ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50/30' : 'text-red-600 bg-red-50/30'
+                      }`}>
+                        {order.type === 'payment' ? '—' : profit.toFixed(2)}
+                      </td>
+                      <td className="p-4 text-center font-bold text-orange-600 dark:text-orange-400">
+                        {returnedValue > 0 ? returnedValue.toFixed(2) : '-'}
+                      </td>
+                      <td className="p-4 text-center font-black text-green-600 dark:text-green-400">
+                        {order.paid_amount.toFixed(2)} {storeSettings.currency}
+                      </td>
+                      <td className="p-4 text-center font-black text-red-500">
+                        {effectiveDebt.toFixed(2)} {storeSettings.currency}
+                      </td>
+                      <td className="p-4 text-center">
+                        {order.type === 'payment' ? (
+                          <span style={{ backgroundColor: storeSettings.themeColor + '15', color: storeSettings.themeColor }} className="inline-flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-bold">
+                            سداد آجل
+                          </span>
+                        ) : hasReturns ? (
+                          <span className="inline-flex items-center gap-1 bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400 px-3 py-1 rounded-lg text-xs font-bold">
+                            <ArrowRightLeft size={14} /> مرتجع جزئي/كلي
+                          </span>
+                        ) : order.total - order.paid_amount > 0 ? (
+                          <span className="inline-flex items-center gap-1 bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-300 px-3 py-1 rounded-lg text-xs font-bold">
+                            فاتورة أجل
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-400 px-3 py-1 rounded-lg text-xs font-bold">
+                            فاتورة مكتملة
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-4 text-center">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => window.open(`/view-invoice/${order.id}`, '_blank')}
+                            className="p-2 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all shadow-sm border border-slate-100 dark:border-slate-800"
+                            title="عرض تفاصيل الفاتورة"
+                          >
+                            <Eye size={18} />
+                          </button>
+                          <button 
+                            onClick={() => handlePrint(order)}
+                            style={{ backgroundColor: storeSettings.themeColor + '10', color: storeSettings.themeColor }}
+                            className="p-2 rounded-lg hover:bg-opacity-20 transition-all shadow-sm border border-transparent hover:border-current"
+                            title="طباعة الفاتورة"
+                          >
+                            <Printer size={18} />
+                          </button>
+                          {order.customer?.phone && (
+                            <button
+                              onClick={() => handleSendWhatsApp(order)}
+                              className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-500/25 transition-all shadow-sm border border-emerald-100 dark:border-emerald-500/30"
+                              title="إرسال الفاتورة عبر واتساب"
+                            >
+                              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+                              </svg>
+                            </button>
+                          )}
+                          {!order.is_deleted && order.type === 'sale' && (
+                            <button
+                              onClick={() => openReturnModal(order)}
+                              className="p-2 rounded-lg bg-orange-50 dark:bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-500/25 transition-all shadow-sm border border-orange-100 dark:border-orange-500/30"
+                              title="إجراء مرتجع (جزئي أو كلي) لهذه الفاتورة"
+                            >
+                              <ArrowRightLeft size={18} />
+                            </button>
+                          )}
+                          {!order.is_deleted && order.type === 'sale' && !String(order.id).startsWith('OFF-') && (
+                            <button
+                              onClick={() => setEditingOrder(order)}
+                              className="p-2 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-all shadow-sm border border-indigo-100"
+                              title="تعديل الفاتورة"
+                            >
+                              <Edit2 size={18} />
+                            </button>
+                          )}
+                          {/* بيظهر بس لو على الفاتورة مرتجع فعلاً */}
+                          {!order.is_deleted && (order.items || []).some((it: any) => (Number(it.returned_quantity) || 0) > 0) && (
+                            <button
+                              onClick={() => handleUndoReturn(order)}
+                              className="p-2 rounded-lg bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-500/25 transition-all shadow-sm border border-amber-100 dark:border-amber-500/30"
+                              title="إلغاء المرتجع (يرجّع الفاتورة لحالتها قبل الإرجاع)"
+                            >
+                              <Undo2 size={18} />
+                            </button>
+                          )}
+                          {!order.is_deleted && (
+                            <button
+                              onClick={() => handleDeleteOrder(order)}
+                              className="p-2 rounded-lg bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/25 transition-all shadow-sm border border-red-100 dark:border-red-500/30"
+                              title="حذف الفاتورة"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {editingOrder && (
+        <EditInvoiceModal
+          invoice={editingOrder}
+          onClose={() => setEditingOrder(null)}
+        />
+      )}
+      <AddInvoiceModal
+        isOpen={showAddModal}
+        onClose={() => setShowAddModal(false)}
+      />
+
+      {/* ── Partial & Full Invoice Return Modal ── */}
+      {returnOrder && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto" dir="rtl">
+          <div className="bg-white dark:bg-slate-800 rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden flex flex-col my-auto animate-in fade-in zoom-in duration-200">
+            {/* Modal Header */}
+            <div className="p-5 bg-gradient-to-r from-orange-600 to-amber-600 text-white flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/10 rounded-xl">
+                  <ArrowRightLeft size={22} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black">إجراء مرتجع لفاتورة #{returnOrder.id}</h3>
+                  <p className="text-xs text-orange-100 font-bold">حدد الكميات المراد إرجاعها للمخزن وسدد قيمة المرتجع للعميل</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setReturnOrder(null)}
+                className="p-2 hover:bg-white/20 rounded-xl transition text-white"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+              {/* Customer Info Box */}
+              <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-wrap justify-between items-center gap-3">
+                <div>
+                  <div className="text-xs text-slate-500 font-bold">بيانات العميل:</div>
+                  <div className="text-base font-black text-slate-800 dark:text-white">{returnOrder.customer?.name || 'عميل نقدي'}</div>
+                  {returnOrder.customer?.phone && <div className="text-xs text-slate-500 font-mono">{returnOrder.customer.phone}</div>}
+                </div>
+                {returnOrder.customer && (
+                  <div className="bg-red-50 dark:bg-red-950/40 p-2.5 rounded-xl border border-red-200 dark:border-red-800 text-left">
+                    <div className="text-[11px] font-bold text-red-600 dark:text-red-400">المديونية الحالية:</div>
+                    <div className="text-sm font-black text-red-700 dark:text-red-300 font-mono">{(returnOrder.customer.debt || 0).toFixed(2)} {storeSettings.currency}</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Product Items Selection Table */}
+              <div className="space-y-3">
+                <div className="text-sm font-black text-slate-800 dark:text-white flex justify-between items-center">
+                  <span>أصناف الفاتورة والكميات المتاحة للإرجاع:</span>
+                </div>
+
+                <div className="space-y-3">
+                  {(returnOrder.items || []).map((it: any, idx: number) => {
+                    const key = it.product_id || it.id;
+                    const originalQty = Number(it.quantity) || 0;
+                    const alreadyReturned = Number(it.returned_quantity) || 0;
+                    const availableQty = Math.max(0, originalQty - alreadyReturned);
+                    const currentReturnQty = returnQtys[key] || 0;
+
+                    return (
+                      <div key={idx} className="bg-slate-50/50 dark:bg-slate-900/50 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                        <div className="space-y-1">
+                          <h4 className="font-black text-slate-800 dark:text-white text-sm">{it.name}</h4>
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400 font-bold">
+                            <span>الكمية المباعة: <strong className="text-slate-800 dark:text-slate-200 font-mono">{originalQty}</strong></span>
+                            {alreadyReturned > 0 && <span className="text-amber-600">مرتجع سابقاً: <strong className="font-mono">{alreadyReturned}</strong></span>}
+                            <span>المتاح للإرجاع: <strong className="text-emerald-600 font-mono">{availableQty}</strong></span>
+                            <span>سعر القطعة: <strong className="text-slate-800 dark:text-slate-200 font-mono">{it.sale_price.toFixed(2)} {storeSettings.currency}</strong></span>
+                          </div>
+                        </div>
+
+                        {availableQty > 0 ? (
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div className="flex items-center bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl overflow-hidden shadow-sm">
+                              <button
+                                type="button"
+                                onClick={() => setReturnQtys({ ...returnQtys, [key]: Math.max(0, currentReturnQty - 1) })}
+                                className="px-3 py-1.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 font-black text-base"
+                              >
+                                -
+                              </button>
+                              <input
+                                type="number"
+                                min={0}
+                                max={availableQty}
+                                value={currentReturnQty}
+                                onChange={(e) => {
+                                  const val = Math.max(0, Math.min(availableQty, Number(e.target.value) || 0));
+                                  setReturnQtys({ ...returnQtys, [key]: val });
+                                }}
+                                className="w-14 text-center font-black bg-transparent border-none text-slate-800 dark:text-white focus:outline-none font-mono"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setReturnQtys({ ...returnQtys, [key]: Math.min(availableQty, currentReturnQty + 1) })}
+                                className="px-3 py-1.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 font-black text-base"
+                              >
+                                +
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setReturnQtys({ ...returnQtys, [key]: availableQty })}
+                              className="text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 font-bold px-2.5 py-2 rounded-xl border border-amber-200 transition"
+                            >
+                              إرجاع الكل
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-xs font-bold text-red-500 bg-red-50 px-3 py-1.5 rounded-xl border border-red-100">تم إرجاع بالكامل</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Settlement Method & Totals */}
+              {(() => {
+                const itemsSum = (returnOrder.items || []).reduce((s: number, i: any) => s + (Number(i.quantity) * Number(i.sale_price)), 0);
+                const discountRatio = itemsSum > 0 ? Math.min(1, Number(returnOrder.total) / itemsSum) : 1;
+                const grossReturnTotal = (returnOrder.items || []).reduce((sum: number, it: any) => {
+                  const key = it.product_id || it.id;
+                  const q = returnQtys[key] || 0;
+                  return sum + (q * Number(it.sale_price));
+                }, 0) * discountRatio;
+
+                return (
+                  <div className="bg-amber-50/60 dark:bg-amber-950/30 p-5 rounded-2xl border border-amber-200/80 dark:border-amber-900/50 space-y-4">
+                    <div className="flex justify-between items-center text-sm font-black text-amber-900 dark:text-amber-200">
+                      <span>إجمالي قيمة المرتجع المستردة:</span>
+                      <span className="text-xl font-mono text-amber-700 dark:text-amber-300 font-black">{grossReturnTotal.toFixed(2)} {storeSettings.currency}</span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">طريقة تسوية المسترد للعميل:</label>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {returnOrder.customer && returnOrder.customer.debt > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setRefundMethod('debt')}
+                            className={`p-2.5 rounded-xl border font-bold text-xs transition ${refundMethod === 'debt' ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
+                          >
+                            📉 خصم من المديونية
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setRefundMethod('cash')}
+                          className={`p-2.5 rounded-xl border font-bold text-xs transition ${refundMethod === 'cash' ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
+                        >
+                          💵 استرداد كاش
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRefundMethod('visa')}
+                          className={`p-2.5 rounded-xl border font-bold text-xs transition ${refundMethod === 'visa' ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
+                        >
+                          💳 فيزا
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRefundMethod('wallet')}
+                          className={`p-2.5 rounded-xl border font-bold text-xs transition ${refundMethod === 'wallet' ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
+                        >
+                          📱 محفظة / انستاباي
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setReturnOrder(null)}
+                className="px-5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition text-sm"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={handleProcessReturnSubmit}
+                disabled={isSubmittingReturn}
+                className="px-6 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-black shadow-lg transition text-sm disabled:opacity-50 flex items-center gap-2"
+              >
+                {isSubmittingReturn ? 'جاري التنفيذ...' : 'تأكيد وتنفيذ المرتجع'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Select Invoice for Return Modal ── */}
+      {showSelectInvoiceForReturnModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto" dir="rtl">
+          <div className="bg-white dark:bg-slate-800 rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden flex flex-col my-auto animate-in fade-in zoom-in duration-200">
+            <div className="p-5 bg-gradient-to-r from-orange-600 to-amber-600 text-white flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/10 rounded-xl">
+                  <ArrowRightLeft size={22} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black">إجراء عملية مرتجع جديدة</h3>
+                  <p className="text-xs text-orange-100 font-bold">ابحث عن الفاتورة برقمها أو باسم العميل لإجراء المرتجع</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSelectInvoiceForReturnModal(false)}
+                className="p-2 hover:bg-white/20 rounded-xl transition text-white"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+              <div className="relative">
+                <Search className="absolute right-4 top-3.5 text-slate-400" size={18} />
+                <input
+                  type="text"
+                  placeholder="ابحث برقم الفاتورة (#ID) أو اسم العميل أو التليفون..."
+                  value={returnInvoiceSearch}
+                  onChange={(e) => setReturnInvoiceSearch(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white py-3 pr-12 pl-4 rounded-xl focus:ring-2 focus:ring-orange-500 focus:outline-none transition font-bold text-sm"
+                />
+              </div>
+
+              <div className="space-y-2">
+                {matchingInvoicesForReturn.slice(0, 15).map((ord) => (
+                  <div
+                    key={ord.id}
+                    onClick={() => {
+                      setShowSelectInvoiceForReturnModal(false);
+                      openReturnModal(ord);
+                    }}
+                    className="p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50 hover:border-orange-500 hover:bg-orange-50/40 dark:hover:bg-orange-950/20 cursor-pointer transition flex items-center justify-between gap-3 shadow-sm group"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-slate-900 dark:text-white text-base">فاتورة #{ord.id}</span>
+                        <span className="text-xs bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono px-2 py-0.5 rounded-lg">{ord.date ? new Date(ord.date).toLocaleDateString('ar-EG') : ''}</span>
+                      </div>
+                      <div className="text-xs font-bold text-slate-600 dark:text-slate-300 mt-1">
+                        العميل: <strong className="text-slate-900 dark:text-white">{ord.customer?.name || 'عميل نقدي'}</strong>
+                        {ord.customer?.phone ? ` (${ord.customer.phone})` : ''}
+                      </div>
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        الأصناف: {(ord.items || []).map((i: any) => `${i.name} (${i.quantity})`).join(' ، ')}
+                      </div>
+                    </div>
+
+                    <div className="text-left shrink-0">
+                      <div className="text-sm font-black text-orange-600 font-mono">{ord.total.toFixed(2)} {storeSettings.currency}</div>
+                      <span className="inline-block mt-1 text-xs bg-orange-600 text-white font-bold px-3 py-1 rounded-xl shadow-sm group-hover:scale-105 transition">
+                        اختيار وإرجاع ↩️
+                      </span>
+                    </div>
+                  </div>
+                ))}
+                {matchingInvoicesForReturn.length === 0 && (
+                  <div className="p-8 text-center text-slate-400 text-sm font-bold">
+                    لا توجد فواتير مطابقة لنتائج البحث.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

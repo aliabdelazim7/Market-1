@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>%APP_NAME% — الكاشير</title>
+    <meta name="description" content="%APP_DESCRIPTION%" />
+
+    <!--
+      الأيقونات: SVG للمتصفحات الحديثة، و ICO كبديل للقديمة.
+      FaviconSwitcher بيبدّل الـ SVG بين نسخة الكاشير والإدارة أثناء التصفح.
+    -->
+    <link id="app-favicon" rel="icon" type="image/svg+xml" href="/favicon-cashier.svg" />
+    <link rel="alternate icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="mask-icon" href="/masked-icon.svg" color="#0D0D0D" />
+    <!--
+      تطبيق الثيم قبل أي رسم عشان مايحصلش وميض أبيض لحظة الفتح.
+      المنطق ده لازم يفضل مطابق لـ src/theme.ts.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('theme');
+          var mode = (stored === 'light' || stored === 'dark' || stored === 'system') ? stored : 'dark';
+          var dark = mode === 'system'
+            ? window.matchMedia('(prefers-color-scheme: dark)').matches
+            : mode === 'dark';
+          var root = document.documentElement;
+          root.classList.toggle('dark', dark);
+          root.dataset.theme = dark ? 'dark' : 'light';
+          root.style.colorScheme = dark ? 'dark' : 'light';
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute('content', dark ? '#020617' : '#f8fafc');
+        } catch (e) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+
+    <!-- أيقونة الشاشة الرئيسية للآيفون (iOS بياخد الأيقونة من هنا مش من الـ manifest) -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <!-- تشغيل كتطبيق مستقل (بدون شريط المتصفح) عند الإضافة للشاشة الرئيسية -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="%APP_NAME%" />
+    <meta name="application-name" content="%APP_NAME%" />
+    <!-- القيمة دي بتتحدّث وقت التشغيل حسب الوضع الفاتح/الداكن (src/theme.ts). -->
+    <meta name="theme-color" content="#020617" />
+
+    <!--
+      معاينة الرابط عند المشاركة (واتساب، فيسبوك، تويتر، تليجرام، سلاك).
+      قبل كده ماكانش فيه أي og:* فاللينك كان بيتبعت من غير صورة ولا وصف.
+      الروابط لازم تكون مطلقة — الزواحف مابتحلّش المسارات النسبية.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="%APP_NAME%" />
+    <meta property="og:title" content="%APP_NAME% — نظام الكاشير وإدارة المتجر" />
+    <meta property="og:description" content="%APP_DESCRIPTION%" />
+    <meta property="og:url" content="%SITE_URL%/" />
+    <meta property="og:image" content="%SITE_URL%/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="%APP_NAME%" />
+    <meta property="og:locale" content="ar_EG" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="%APP_NAME% — نظام الكاشير وإدارة المتجر" />
+    <meta name="twitter:description" content="%APP_DESCRIPTION%" />
+    <meta name="twitter:image" content="%SITE_URL%/og-image.png" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700&family=Tajawal:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
