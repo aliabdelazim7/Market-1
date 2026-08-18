@@ -271,7 +271,7 @@ export default function PublicInvoice() {
     <div className="force-light min-h-screen flex flex-col items-center justify-center bg-white p-6 text-center">
       <div className="text-red-500 text-6xl mb-4">⚠️</div>
       <h1 className="text-2xl font-black text-slate-800">عذراً، الفاتورة غير موجودة</h1>
-      <p className="text-slate-500 mt-2">يرجى التأكد من الرابط الصحيح.</p>
+      <p className="text-slate-500 mt-2">{error || 'يرجى التأكد من الرابط الصحيح.'}</p>
     </div>
   );
 
