@@ -194,3 +194,9 @@ comment on function public.get_public_invoice(text) is
 'Public invoice lookup compatible with Marker1 text-based IDs; exposes only one requested invoice plus required receipt data.';
 
 select public.get_public_invoice('98') is not null as invoice_98_found;
+
+-- Force PostgREST to refresh its function schema cache immediately.
+notify pgrst, 'reload schema';
+
+-- Verification after schema refresh.
+select public.get_public_invoice('98') is not null as invoice_98_found;

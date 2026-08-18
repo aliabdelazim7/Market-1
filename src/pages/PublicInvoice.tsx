@@ -34,17 +34,17 @@ export default function PublicInvoice() {
         const s = rpc.settings;
         if (s) {
           setSettings({
-            name: s.name,
-            currency: s.currency,
-            logo: s.logo,
-            taxRate: s.tax_rate,
-            themeColor: s.theme_color,
-            address: s.address,
-            phone: s.phone,
-            phone2: s.phone2,
-            whatsappCountryCode: s.whatsapp_country_code,
-            initial_balance: s.initial_balance,
-            locationUrl: s.location_url,
+            name: s.name || 'السوبر ماركت',
+            currency: s.currency || 'جنيه',
+            logo: s.logo || '',
+            taxRate: Number(s.tax_rate || 0),
+            themeColor: s.theme_color || '#111827',
+            address: s.address || '',
+            phone: s.phone || '',
+            phone2: s.phone2 || '',
+            whatsappCountryCode: s.whatsapp_country_code || '+20',
+            initial_balance: Number(s.initial_balance || 0),
+            locationUrl: s.location_url || '',
             taxNumber: s.tax_number || s.tax_id || '',
             commercialRecord: s.commercial_record || '',
             defaultInvoiceFormat: s.default_invoice_format === 'a4' ? 'a4' : 'thermal'
@@ -52,13 +52,21 @@ export default function PublicInvoice() {
           if (s.default_invoice_format === 'a4' || s.default_invoice_format === 'thermal') {
             setViewFormat(s.default_invoice_format);
           }
+        } else {
+          setSettings({
+            name: 'السوبر ماركت', currency: 'جنيه', logo: '', taxRate: 0,
+            themeColor: '#111827', address: '', phone: '', phone2: '',
+            whatsappCountryCode: '+20', initial_balance: 0,
+            locationUrl: '', taxNumber: '', commercialRecord: '',
+            defaultInvoiceFormat: 'thermal'
+          });
         }
 
         // Sale order
         const o = rpc.kind === 'order' ? rpc.order : null;
 
         if (o) {
-          const itemRows = (o.order_items as any[]) ?? [];
+          const itemRows = (o.order_items as any[]) ?? (rpc.order_items as any[]) ?? [];
           const items = itemRows.map((i: any) => ({
             id: i.product_id,
             name: i.product_name || i.products?.name || 'منتج غير معروف',
