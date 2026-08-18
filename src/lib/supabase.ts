@@ -18,8 +18,12 @@ const envKey = (
   ''
 ) as string;
 
-const DEFAULT_SUPABASE_URL = 'https://cysweirlohrlsofrdrgr.supabase.co';
-const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN5c3dlaXJsb2hybHNvZnJkcmdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0NDgyMzcsImV4cCI6MjEwMjAyNDIzN30.u0cxdSdh3eESW_vynIC1Q1gUUVRW59Te2Jem8w9MfpU';
+// Do not silently fall back to another customer's Supabase project. A stale
+// fallback can make a Vercel deployment appear to work while reading/writing
+// the wrong database. Configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
+// in Vercel (or use the explicit localStorage override for local testing).
+const DEFAULT_SUPABASE_URL = '';
+const DEFAULT_SUPABASE_ANON_KEY = '';
 
 export const supabaseUrl = customUrl || envUrl || DEFAULT_SUPABASE_URL;
 export const supabaseAnonKey = customKey || envKey || DEFAULT_SUPABASE_ANON_KEY;
