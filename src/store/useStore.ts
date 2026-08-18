@@ -2862,6 +2862,107 @@ export const useStore = create<CashierStore>((set, get) => ({
 
       const splits = getSplits(splitPayments, paymentMethod, savedPaidAmount);
 
+      // المسار المحاسبي المفضل: Transaction واحدة داخل Postgres تشمل الرأس
+      // والأصناف والمخزون. نستخدم fallback القديم فقط أثناء فترة تطبيق migration
+      // على قواعد البيانات القديمة؛ أي خطأ آخر يوقف العملية ولا يحولها إلى Offline.
+      const atomicResult = await supabase.rpc('create_sale_atomic', {
+        p_order: {
+          total,
+          paid_amount: savedPaidAmount,
+          paid_cash: splits.cash,
+          paid_visa: splits.visa,
+          paid_wallet: splits.wallet,
+          paid_instapay: splits.instapay,
+          paid_method5: splits.method5 || 0,
+          paid_method6: splits.method6 || 0,
+          type,
+          customer_id: customerId,
+          payment_method: paymentMethod,
+          cashier_name: finalCashierName,
+          salesperson_id: sp?.id || null,
+          salesperson_name: sp?.name || null,
+          notes: finalNotes,
+          coupon_code: couponCode || null,
+          discount_amount: discountAmount || 0,
+          car_id: carId || null,
+          created_at: orderCreatedAt,
+          client_ref: clientRef,
+        },
+        p_items: state.cart.map((item) => ({
+          product_id: item.id,
+          product_name: item.name,
+          barcode: item.barcode,
+          quantity: item.quantity,
+          sale_price: item.sale_price,
+          purchase_price: item.average_purchase_price || item.purchase_price,
+        })),
+      });
+
+      if (!atomicResult.error) {
+        const result = atomicResult.data as { duplicate?: boolean; order?: Record<string, unknown> } | null;
+        const persisted = result?.order;
+        // بعض قواعد البيانات القديمة وtest doubles لا تعرض RPC بعد؛ نمرر
+        // للـ legacy path في هذه الحالة فقط. إذا أعادت RPC نتيجة، فلا نعود
+        // أبداً إلى مسار آخر بعد بدء المعاملة.
+        if (!persisted?.id) {
+          console.warn('Atomic sale RPC is not available yet; using legacy path until db/77 is applied.');
+        } else {
+        const atomicInvoiceId = String(persisted.id);
+        persistedOrder = true;
+        const newOrder: Order = {
+          id: atomicInvoiceId,
+          items: state.cart.map((i) => ({ ...i })),
+          total,
+          paid_amount: savedPaidAmount,
+          paid_cash: splits.cash,
+          paid_visa: splits.visa,
+          paid_wallet: splits.wallet,
+          paid_instapay: splits.instapay,
+          paid_method5: splits.method5 || 0,
+          paid_method6: splits.method6 || 0,
+          type,
+          payment_method: paymentMethod as any,
+          date: String(persisted.created_at || orderCreatedAt),
+          customer: finalCustomer,
+          cashier_name: finalCashierName,
+          salesperson_id: sp?.id,
+          salesperson_name: sp?.name,
+          notes: finalNotes,
+          car_id: carId || undefined,
+          client_ref: clientRef,
+        };
+        const updatedProducts = state.products.map((p) => {
+          const cartItem = state.cart.find((c) => c.id === p.id);
+          if (!cartItem) return p;
+          const newStock = Math.max(0, p.stock_quantity - cartItem.quantity);
+          return { ...p, stock_quantity: newStock, display_quantity: displayAfterStockDrop(p, newStock) };
+        });
+        const updatedCustomers = finalCustomer && !state.customers.find((c) => c.id === finalCustomer!.id)
+          ? [finalCustomer, ...state.customers]
+          : state.customers;
+        set({
+          orders: [newOrder, ...state.orders.filter((o) => o.id !== atomicInvoiceId)],
+          cart: [], invoiceType: 'retail', salesperson: null,
+          products: updatedProducts, customers: updatedCustomers,
+          invoiceCounter: Number(atomicInvoiceId) + 1,
+          activeInvoiceId: String(Number(atomicInvoiceId) + 1),
+        });
+          new BroadcastChannel('cashier-sync').postMessage('sync_products');
+          return atomicInvoiceId;
+        }
+      }
+
+      // 42883/PGRST202 أو رسالة function غير موجودة = migration لم تُطبّق
+      // بعد. أي خطأ آخر هو فشل مالي حقيقي ولا يجوز تحويله إلى Offline.
+      const atomicError = atomicResult.error as { code?: string; message?: string } | null;
+      const rpcMissing = atomicError && (
+        atomicError.code === '42883' || atomicError.code === 'PGRST202' ||
+        /function .*create_sale_atomic.*does not exist|could not find the function/i.test(atomicError.message || '')
+      );
+      if (atomicError && !rpcMissing) {
+        throw new Error(`فشل حفظ البيع داخل المعاملة الذرية: ${atomicError.message || 'خطأ غير معروف'}`);
+      }
+
       /**
        * تسجيل الفاتورة، مع إعادة المحاولة برقم جديد لو الرقم اتاخد.
        *
