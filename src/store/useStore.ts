@@ -3204,7 +3204,19 @@ ${arLabels} (${droppedColumns.join('، ')})
         alert('تم حفظ جزء من العملية ثم حدث خطأ. لم يتم إنشاء نسخة Offline حتى لا تتكرر الفاتورة. راجع الفاتورة والدفتر قبل إعادة المحاولة.');
         return null;
       }
-      return executeOfflineCheckout();
+
+      // لا نحول أخطاء قاعدة البيانات أو أخطاء التحقق إلى Offline.
+      // هذا كان سبب ظهور رسالة نجاح محلية لفاتورة لم تُحفظ في Supabase:
+      // أي خطأ من RPC/insert كان يدخل الطابور المحلي وكأنه انقطاع شبكة.
+      // Offline مسموح فقط عند انقطاع فعلي أو انتهاء مهلة الاتصال.
+      if (isNetworkError(err)) return executeOfflineCheckout();
+
+      const message = err instanceof Error ? err.message : String(err || 'خطأ غير معروف');
+      const alertFn = (globalThis as any)?.alert || (typeof window !== 'undefined' ? (window as any).alert : undefined);
+      if (typeof alertFn === 'function') {
+        alertFn(`فشل حفظ البيع في قاعدة البيانات. لم يتم إنشاء فاتورة Offline.\n\n${message}`);
+      }
+      return null;
     }
   },
 
