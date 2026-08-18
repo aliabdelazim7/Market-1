@@ -2143,6 +2143,19 @@ export const useStore = create<CashierStore>((set, get) => ({
           supabase.from('employee_attendance').select('*').order('created_at', { ascending: false }),
         ]), NET_TIMEOUT.fullLoad, 'تحميل البيانات');
 
+      // Supabase resolves a failed query as { data: null, error } instead of
+      // rejecting Promise.all. Do not treat that as a successful refresh:
+      // otherwise valid state and the offline snapshot are overwritten with
+      // empty products/orders, which looks like data was deleted after login.
+      const criticalLoadError = [
+        ['products', productsRes.error],
+        ['orders', ordersRes.error],
+      ].find(([, error]) => Boolean(error));
+      if (criticalLoadError) {
+        const [table, error] = criticalLoadError;
+        throw new Error(`فشل تحميل ${table} من Supabase: ${error?.message || 'خطأ غير معروف'}`);
+      }
+
       const settings = settingsRes.data ? mapSettings(settingsRes.data as Record<string, unknown>) : get().storeSettings;
 
       const customers: Customer[] = ((customersRes.data ?? []) as Record<string, unknown>[]).map((c) => ({
