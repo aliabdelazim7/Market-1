@@ -2153,7 +2153,8 @@ export const useStore = create<CashierStore>((set, get) => ({
       ].find(([, error]) => Boolean(error));
       if (criticalLoadError) {
         const [table, error] = criticalLoadError;
-        throw new Error(`فشل تحميل ${table} من Supabase: ${error?.message || 'خطأ غير معروف'}`);
+        const errorMessage = typeof error === 'string' ? error : error?.message || 'خطأ غير معروف';
+        throw new Error(`فشل تحميل ${table} من Supabase: ${errorMessage}`);
       }
 
       const settings = settingsRes.data ? mapSettings(settingsRes.data as Record<string, unknown>) : get().storeSettings;
