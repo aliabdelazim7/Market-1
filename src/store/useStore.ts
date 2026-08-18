@@ -2110,8 +2110,10 @@ export const useStore = create<CashierStore>((set, get) => ({
     }
     const bootedFromCache = get().products.length > 0;
 
-    if (offlineNow) {
-      if (bootedFromCache) return;
+    // navigator.onLine قد يكون false بشكل غير دقيق داخل بعض متصفحات الهاتف/PWA.
+    // لو عندنا cache نسمح بمحاولة Supabase في الخلفية، ونستخدم الأوفلاين فقط
+    // إذا فشلت الطلبات فعليًا. أما أول تشغيل بدون cache وبدون شبكة فنوقف هنا.
+    if (offlineNow && !bootedFromCache) {
       set({ isLoading: false, dbError: 'لا يوجد اتصال بالإنترنت ولا توجد نسخة محفوظة على هذا الجهاز.' });
       return;
     }
@@ -2795,9 +2797,9 @@ export const useStore = create<CashierStore>((set, get) => ({
     };
 
     try {
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        throw new Error("No network connectivity");
-      }
+      // لا نعتمد على navigator.onLine وحده؛ في بعض الهواتف وPWA يظل false
+      // رغم أن طلبات Supabase تعمل فعليًا. نجرّب الحفظ الحقيقي أولًا، ولا ننتقل
+      // للأوفلاين إلا إذا فشل طلب Supabase أو انتهت مهلته.
 
       // 1. حجز رقم الفاتورة.
       //

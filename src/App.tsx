@@ -212,11 +212,11 @@ function App() {
     window.addEventListener('online', handleBackOnline);
 
     // النت الضعيف مابيرفعش حدث online أصلاً (الجهاز «متصل» طول الوقت)، فبنعيد
-    // المحاولة كل دقيقة طول ما إحنا شغّالين من النسخة المحفوظة — وأول محاولة
+    // المحاولة كل 15 ثانية طالما فيه فواتير محلية في الطابور — وأول محاولة
     // تنجح بترفع الفواتير المحلية كمان.
     const retry = setInterval(() => {
       const s = useStore.getState();
-      if (s.isOfflineMode && !s.isRefreshing && navigator.onLine) {
+      if (s.offlineQueue.length > 0 && !s.isRefreshing && !s.isSyncing) {
         loadAll(true).then(() => {
           if (!useStore.getState().isOfflineMode) {
             useStore.getState().syncOfflineQueue();
@@ -224,7 +224,7 @@ function App() {
           }
         });
       }
-    }, 60_000);
+    }, 15_000);
 
     const channel = new BroadcastChannel('cashier-sync');
     channel.onmessage = (event) => {

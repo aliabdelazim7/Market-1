@@ -1484,10 +1484,10 @@ export default function POS() {
 
     // Initial check
     useStore.setState({ isOnline: navigator.onLine });
-    if (navigator.onLine) {
-      syncOfflineQueue();
-      syncOfflineReturnsQueue();
-    }
+    // نحاول المزامنة حتى لو navigator.onLine أعطى false بشكل غير دقيق؛
+    // Supabase هو الاختبار الحقيقي للاتصال.
+    syncOfflineQueue();
+    syncOfflineReturnsQueue();
 
     return () => {
       window.removeEventListener('online', handleOnline);
