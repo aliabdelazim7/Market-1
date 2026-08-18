@@ -2796,6 +2796,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       return offlineId;
     };
 
+    let persistedOrder = false;
     try {
       // لا نعتمد على navigator.onLine وحده؛ في بعض الهواتف وPWA يظل false
       // رغم أن طلبات Supabase تعمل فعليًا. نجرّب الحفظ الحقيقي أولًا، ولا ننتقل
@@ -2962,6 +2963,8 @@ ${arLabels} (${droppedColumns.join('، ')})
         }
       }
 
+      persistedOrder = true;
+
       // تحصيل عام رايح للخزنة الرئيسية: نسجّل نظيره في دفتر الرئيسية (مربوط بالـ groupId).
       if (collectionGroupId) {
         await get().recordMainTreasuryIn(splits as any, 'debt_collection', `تحصيل من ${finalCustomer?.name || 'عميل'}`, orderCreatedAt, collectionGroupId);
@@ -2980,24 +2983,32 @@ ${arLabels} (${droppedColumns.join('، ')})
       }));
       const { error: itemsError } = await supabase.from('order_items').insert(itemsPayload);
       if (itemsError) {
-        // كان بيتسجّل في الكونسول وبس — فالفاتورة بتتحفظ من غير أصنافها،
-        // والربح والمخزون والمرتجعات كلها بتتحسب غلط عليها بعد كده من غير
-        // ما حد ياخد باله. لازم المستخدم يعرف فوراً.
+        // لا نسمح أبداً ببقاء رأس فاتورة بلا أصناف: ذلك يفسد الربح والمخزون
+        // والمرتجعات. نحاول حذف الرأس الذي أُنشئ للتو، ولا ننتقل إلى Offline
+        // لأن الطلب قد وصل بالفعل إلى قاعدة البيانات.
         console.error('Order Items Insert Error:', itemsError);
+        const { error: rollbackError } = await supabase.from('orders').delete().eq('id', invoiceId);
+        persistedOrder = !rollbackError;
         alert(
-          `تحذير: الفاتورة رقم ${invoiceId} اتسجّلت لكن أصنافها مااتسجّلتش (${itemsError.message}).
-` +
-          `راجعها من صفحة الفواتير قبل ما تكمّل.`,
+          rollbackError
+            ? `تعذر حفظ أصناف الفاتورة رقم ${invoiceId}، وفشل التراجع عن رأس الفاتورة أيضاً. أوقف البيع وراجع الفاتورة فوراً.`
+            : `لم تُحفظ الفاتورة رقم ${invoiceId} لأن أصنافها فشلت في الحفظ. لم يتم خصم المخزون.`,
         );
+        return null;
       }
 
-      // Update stock (والمعروض ينزل معاه — البيع بيطلع من المحل أولاً)
+      // Update stock (والمعروض ينزل معاه — البيع بيطلع من المحل أولاً).
+      // لا نتجاهل أخطاء تحديث المخزون؛ نجاح رأس الفاتورة والأصناف وحده لا يكفي
+      // لأن التقارير ستعرض ربحاً ومخزوناً غير صحيحين.
       for (const item of state.cart) {
         const prod = state.products.find((p) => p.id === item.id);
         const newQty = Math.max(0, (prod?.stock_quantity ?? 0) - item.quantity);
-        await supabase.from('products')
+        const { error: stockError } = await supabase.from('products')
           .update({ stock_quantity: newQty, display_quantity: displayAfterStockDrop(prod, newQty) })
           .eq('id', item.id);
+        if (stockError) {
+          throw new Error(`فشل تحديث مخزون الصنف ${item.name || item.id}: ${stockError.message || stockError}`);
+        }
       }
 
       // Build new order for local state
@@ -3071,7 +3082,13 @@ ${arLabels} (${droppedColumns.join('، ')})
 
       return invoiceId;
     } catch (err) {
-      console.warn("Network offline or Supabase connection failed. Falling back to offline checkout:", err);
+      console.warn("Checkout failed:", err);
+      // بعد نجاح insert للفاتورة لا يجوز تحويل الخطأ إلى Offline checkout؛
+      // هذا قد يكرر البيع عند عودة الاتصال. نرجع null ونطلب مراجعة واضحة.
+      if (persistedOrder) {
+        alert('تم حفظ جزء من العملية ثم حدث خطأ. لم يتم إنشاء نسخة Offline حتى لا تتكرر الفاتورة. راجع الفاتورة والدفتر قبل إعادة المحاولة.');
+        return null;
+      }
       return executeOfflineCheckout();
     }
   },
@@ -4127,6 +4144,9 @@ ${arLabels} (${droppedColumns.join('، ')})
 
     const oldTotal = order.total;
     const oldPaid = order.paid_amount;
+    const changedStock: Array<{ productId: string; before: number }> = [];
+    let orderUpdated = false;
+    let itemsDeleted = false;
 
     try {
       // Calculate stock adjustments
@@ -4166,6 +4186,7 @@ ${arLabels} (${droppedColumns.join('، ')})
           .eq('id', productId);
 
         if (productError) throw productError;
+        changedStock.push({ productId, before: dbStock });
 
         if (productIndex >= 0) {
           updatedProducts[productIndex] = {
@@ -4195,6 +4216,7 @@ ${arLabels} (${droppedColumns.join('، ')})
         .eq('id', orderId);
 
       if (orderError) throw orderError;
+      orderUpdated = true;
 
       // Update order items in Supabase
       // First delete old items
@@ -4204,6 +4226,7 @@ ${arLabels} (${droppedColumns.join('، ')})
         .eq('order_id', orderId);
 
       if (deleteItemsError) throw deleteItemsError;
+      itemsDeleted = true;
 
       // Then insert new items
       const itemsPayload = updatedItems.map((item) => ({
@@ -4266,6 +4289,43 @@ ${arLabels} (${droppedColumns.join('، ')})
       return true;
     } catch (err) {
       console.error("Edit Order Error:", err);
+      try {
+        if (itemsDeleted) {
+          await supabase.from('order_items').delete().eq('order_id', orderId);
+          const oldItemsPayload = (order.items || []).map((item) => ({
+            order_id: orderId,
+            product_id: item.id,
+            product_name: item.name,
+            barcode: item.barcode,
+            quantity: item.quantity,
+            returned_quantity: item.returned_quantity || 0,
+            refunded_amount: item.refunded_amount || 0,
+            sale_price: item.sale_price,
+            purchase_price: item.average_purchase_price || item.purchase_price,
+          }));
+          if (oldItemsPayload.length) await supabase.from('order_items').insert(oldItemsPayload);
+        }
+        if (orderUpdated) {
+          await supabase.from('orders').update({
+            total: order.total,
+            paid_amount: order.paid_amount,
+            paid_cash: order.paid_cash,
+            paid_visa: order.paid_visa,
+            paid_wallet: order.paid_wallet,
+            paid_instapay: order.paid_instapay,
+            paid_method5: (order as any).paid_method5 || 0,
+            paid_method6: (order as any).paid_method6 || 0,
+            payment_method: order.payment_method,
+            created_at: order.date,
+          }).eq('id', orderId);
+        }
+        for (const change of changedStock) {
+          await supabase.from('products').update({ stock_quantity: change.before }).eq('id', change.productId);
+        }
+      } catch (rollbackError) {
+        console.error('Edit Order rollback failed:', rollbackError);
+      }
+      alert('لم يتم حفظ تعديل الفاتورة بالكامل، وتمت محاولة استرجاع حالتها السابقة. راجع الفاتورة والمخزون قبل إعادة المحاولة.');
       return false;
     }
   },
