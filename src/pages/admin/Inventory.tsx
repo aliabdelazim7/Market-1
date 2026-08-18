@@ -1274,45 +1274,7 @@ export default function Inventory() {
                   </div>
                 </div>
 
-                {/* Yellow Card: Purchase Price & VAT 14% */}
-                <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-500/40 rounded-2xl p-3.5 text-xs space-y-1.5 text-amber-900 dark:text-amber-200">
-                  <div className="flex justify-between">
-                    <span>🛒 سعر الشراء:</span>
-                    <span className="font-bold">{(formData.purchase_price || 0).toFixed(2)} جنيه</span>
-                  </div>
-                  <div className="flex justify-between text-amber-800/80 dark:text-amber-300/80">
-                    <span>🛍️ الضريبة 14%:</span>
-                    <span className="font-bold">{((formData.purchase_price || 0) * 0.14).toFixed(2)} جنيه</span>
-                  </div>
-                  <div className="flex justify-between pt-1.5 border-t border-amber-200 dark:border-amber-500/30 font-black text-amber-900 dark:text-amber-400 text-sm">
-                    <span>⚖️ الإجمالي عند الشراء:</span>
-                    <span>{((formData.purchase_price || 0) * 1.14).toFixed(2)} جنيه</span>
-                  </div>
-                </div>
-
-                {/* Green Card: Sale Price & Discount Breakdown */}
-                {(() => {
-                  const sale = formData.sale_price || 0;
-                  const pct = formData.discount_percent || 0;
-                  const discAmt = sale * (pct / 100);
-                  const netSale = sale - discAmt;
-                  return (
-                    <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-500/40 rounded-2xl p-3.5 text-xs space-y-1.5 text-emerald-900 dark:text-emerald-200">
-                      <div className="flex justify-between">
-                        <span>🏷️ سعر البيع:</span>
-                        <span className="font-bold">{sale.toFixed(2)} جنيه</span>
-                      </div>
-                      <div className="flex justify-between text-emerald-800/80 dark:text-emerald-300/80">
-                        <span>🏷️ الخصم ({pct}%):</span>
-                        <span className="font-bold">{discAmt.toFixed(2)} جنيه</span>
-                      </div>
-                      <div className="flex justify-between pt-1.5 border-t border-emerald-200 dark:border-emerald-500/30 font-black text-emerald-900 dark:text-emerald-400 text-sm">
-                        <span>🎯 صافي سعر البيع:</span>
-                        <span>{netSale.toFixed(2)} جنيه</span>
-                      </div>
-                    </div>
-                  );
-                })()}
+                
 
                 {/* Low Stock Alert Threshold */}
                 <div>
@@ -1328,26 +1290,6 @@ export default function Inventory() {
                   />
                 </div>
 
-                {/* Large Green Box: Website Net Profit */}
-                {(() => {
-                  const sale = formData.sale_price || 0;
-                  const pct = formData.discount_percent || 0;
-                  const discAmt = sale * (pct / 100);
-                  const netSale = sale - discAmt;
-                  const totalCost = (formData.purchase_price || 0) * 1.14;
-                  const webAd = formData.website_ad_cost || 0;
-                  const netProfit = netSale - totalCost - webAd;
-                  return (
-                    <div className="bg-emerald-100/80 dark:bg-emerald-950/50 border-2 border-emerald-500 dark:border-emerald-500/80 rounded-2xl p-4 text-center space-y-1 shadow-md">
-                      <div className="text-xs font-bold text-emerald-800 dark:text-emerald-400 flex items-center justify-center gap-1">
-                        💵 صافي مكسب الموقع
-                      </div>
-                      <div className={`text-2xl sm:text-3xl font-black ${netProfit >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                        {netProfit.toFixed(2)} جنيه
-                      </div>
-                    </div>
-                  );
-                })()}
 
               </div>
 
