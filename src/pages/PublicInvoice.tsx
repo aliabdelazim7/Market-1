@@ -24,9 +24,12 @@ export default function PublicInvoice() {
         // The public page has no Supabase session, so it cannot read the tables
         // directly (they are locked to authenticated users). Instead it calls a
         // single SECURITY DEFINER function that returns just this one invoice.
-        const { data: rpc, error: rpcErr } = await supabase.rpc('get_public_invoice', { p_id: id });
-        if (rpcErr) throw rpcErr;
-        if (!rpc) throw new Error('Invoice not found');
+        const { data: rpc, error: rpcErr } = await supabase.rpc('get_public_invoice', { p_id: String(id ?? '') });
+        if (rpcErr) {
+          console.error('Public invoice RPC failed:', rpcErr);
+          throw new Error(`تعذر تحميل الفاتورة: ${rpcErr.message || 'خطأ غير معروف'}`);
+        }
+        if (!rpc) throw new Error(`الفاتورة رقم ${id ?? ''} غير موجودة في قاعدة البيانات`);
 
         const s = rpc.settings;
         if (s) {
