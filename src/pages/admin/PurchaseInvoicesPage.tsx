@@ -249,7 +249,7 @@ export default function PurchaseInvoicesPage() {
               {/* Items Section */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400">تفاصيل الأصناف والتكلفة (Unit Cost + Tax % + Discount %)</label>
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400">تفاصيل الأصناف والتكلفة (سعر الوحدة + الخصم)</label>
                   <button
                     type="button"
                     onClick={handleAddItem}
