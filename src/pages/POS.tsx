@@ -1719,6 +1719,44 @@ export default function POS() {
     setShowCustomerSuggestions(false);
   };
 
+  // اختصارات الكاشير في وقت الزحمة. نمنعها داخل حقول الكتابة حتى لا نكسر
+  // إدخال اسم العميل أو المبلغ، ولا نفتح نافذة جديدة فوق modal موجودة بالفعل.
+  useEffect(() => {
+    const onPosShortcut = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      const isTyping = tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable;
+
+      if (event.key === 'Escape') {
+        if (showCustomerSuggestions) { setShowCustomerSuggestions(false); return; }
+        if (showCheckoutModal) { setShowCheckoutModal(false); return; }
+        if (showHoldForm) { setShowHoldForm(false); return; }
+        if (showHeldModal) { setShowHeldModal(false); return; }
+        if (showDebtModal) { setShowDebtModal(false); return; }
+        return;
+      }
+
+      if (isTyping || showCheckoutModal || showHeldModal || showDebtModal || showHoldForm || showSuccessModal || showFinanceModal || showNoteModal) return;
+
+      if (event.key === 'F2') {
+        event.preventDefault();
+        focusById('pos-barcode');
+      } else if (event.key === 'F4' || (event.ctrlKey && event.key === 'Enter')) {
+        event.preventDefault();
+        if (cart.length > 0) {
+          setShouldPrint(false);
+          setShowCheckoutModal(true);
+        }
+      } else if (event.key === 'F8') {
+        event.preventDefault();
+        openHoldForm();
+      }
+    };
+
+    window.addEventListener('keydown', onPosShortcut);
+    return () => window.removeEventListener('keydown', onPosShortcut);
+  }, [cart.length, showCheckoutModal, showHeldModal, showDebtModal, showHoldForm, showSuccessModal, showFinanceModal, showNoteModal, showCustomerSuggestions, holdBusy]);
+
   // ── فواتير معلقة (محجوزة) ──────────────────────────────────
   // حفظ السلة الحالية كفاتورة معلقة (تحجز الكمية من المخزون).
   // فتح نموذج الحفظ كمعلّقة (لإدخال عربون اختياري).
