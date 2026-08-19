@@ -4666,10 +4666,10 @@ export default function POS() {
                   {cart.length}
                 </span>
               </div>
-              <span className="text-xs font-black">عرض الفاتورة ({cart.length} أصناف)</span>
+              <span className="text-xs font-black">راجع وادفع ({cart.length} أصناف)</span>
             </div>
             <div className="flex items-center gap-1.5 text-sm font-black">
-              <span>{subtotal.toFixed(2)}</span>
+              <span>{total.toFixed(2)}</span>
               <span className="text-xs opacity-90">{storeSettings.currency}</span>
               <ArrowLeft size={16} />
             </div>
