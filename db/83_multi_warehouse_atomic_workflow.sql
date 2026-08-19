@@ -4,6 +4,29 @@
 
 create extension if not exists pgcrypto;
 
+-- Some production databases never received the legacy warehouse tables.
+-- Create the minimum compatible shape before any cleanup or RPC definition.
+create table if not exists public.warehouse_stock (
+  id text primary key default gen_random_uuid()::text,
+  created_at timestamptz default now()
+);
+alter table public.warehouse_stock add column if not exists warehouse_id text;
+alter table public.warehouse_stock add column if not exists product_id text;
+alter table public.warehouse_stock add column if not exists stock_quantity numeric default 0;
+alter table public.warehouse_stock add column if not exists min_stock numeric default 0;
+
+create table if not exists public.stock_movement_logs (
+  id text primary key default gen_random_uuid()::text,
+  created_at timestamptz default now()
+);
+alter table public.stock_movement_logs add column if not exists product_id text;
+alter table public.stock_movement_logs add column if not exists warehouse_id text;
+alter table public.stock_movement_logs add column if not exists type text;
+alter table public.stock_movement_logs add column if not exists quantity numeric default 0;
+alter table public.stock_movement_logs add column if not exists reference_type text;
+alter table public.stock_movement_logs add column if not exists reference_id text;
+alter table public.stock_movement_logs add column if not exists notes text;
+
 -- The legacy schema did not always define a unique warehouse/product key.
 -- Consolidate legacy duplicates before enabling the atomic upsert used below.
 with grouped as (
