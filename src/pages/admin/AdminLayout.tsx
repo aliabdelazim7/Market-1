@@ -162,7 +162,7 @@ export default function AdminLayout() {
               }
             >
               <Printer size={20} />
-              <span className="text-[10px] mt-1 font-bold">الكاشير</span>
+              <span className="text-[10px] mt-1 font-bold">المبيعات</span>
             </NavLink>
 
             <NavLink
@@ -186,19 +186,7 @@ export default function AdminLayout() {
               }
             >
               <Package size={20} />
-              <span className="text-[10px] mt-1 font-bold">المنتجات</span>
-            </NavLink>
-
-            <NavLink
-              to="/admin/invoices"
-              className={({ isActive }) =>
-                `flex flex-col items-center justify-center py-1.5 rounded-xl transition touch-feedback ${
-                  isActive ? 'text-indigo-600 dark:text-indigo-400 font-bold bg-indigo-50 dark:bg-indigo-950/60' : 'text-slate-500 dark:text-slate-400'
-                }`
-              }
-            >
-              <FileText size={20} />
-              <span className="text-[10px] mt-1 font-bold">الفواتير</span>
+              <span className="text-[10px] mt-1 font-bold">المخزن</span>
             </NavLink>
 
             <NavLink
@@ -210,7 +198,31 @@ export default function AdminLayout() {
               }
             >
               <Wallet size={20} />
-              <span className="text-[10px] mt-1 font-bold">المصروفات</span>
+              <span className="text-[10px] mt-1 font-bold">الحسابات</span>
+            </NavLink>
+
+            <NavLink
+              to="/admin/reports"
+              className={({ isActive }) =>
+                `flex flex-col items-center justify-center py-1.5 rounded-xl transition touch-feedback ${
+                  isActive ? 'text-indigo-600 dark:text-indigo-400 font-bold bg-indigo-50 dark:bg-indigo-950/60' : 'text-slate-500 dark:text-slate-400'
+                }`
+              }
+            >
+              <BarChart3 size={20} />
+              <span className="text-[10px] mt-1 font-bold">التقارير</span>
+            </NavLink>
+
+            <NavLink
+              to="/admin/invoices"
+              className={({ isActive }) =>
+                `hidden flex-col items-center justify-center py-1.5 rounded-xl transition touch-feedback ${
+                  isActive ? 'text-indigo-600 dark:text-indigo-400 font-bold bg-indigo-50 dark:bg-indigo-950/60' : 'text-slate-500 dark:text-slate-400'
+                }`
+              }
+            >
+              <FileText size={20} />
+              <span className="text-[10px] mt-1 font-bold">الفواتير</span>
             </NavLink>
 
             <button
