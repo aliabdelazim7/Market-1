@@ -12,7 +12,6 @@ export default function PurchaseInvoicesPage() {
   const [invSupplierId, setInvSupplierId] = useState('');
   const [invWarehouseId, setInvWarehouseId] = useState('');
   const [freightCost, setFreightCost] = useState<number>(0);
-  const [taxPercent, setTaxPercent] = useState<number>(0);
   const [discountPercent, setDiscountPercent] = useState<number>(0);
   const [paidAmount, setPaidAmount] = useState<number>(0);
 
@@ -42,27 +41,21 @@ export default function PurchaseInvoicesPage() {
   const rawSubtotal = items.reduce((sum, item) => {
     const lineRaw = item.quantity * item.unit_cost;
     const afterDiscount = lineRaw * (1 - item.discount_percent / 100);
-    const withTax = afterDiscount * (1 + item.tax_percent / 100);
+    const withTax = afterDiscount;
     return sum + withTax;
-  }, 0);
-
-  const totalTaxAmount = items.reduce((sum, item) => {
-    const lineRaw = item.quantity * item.unit_cost * (1 - item.discount_percent / 100);
-    return sum + lineRaw * (item.tax_percent / 100);
   }, 0);
 
   const totalDiscountAmount = items.reduce((sum, item) => {
     return sum + item.quantity * item.unit_cost * (item.discount_percent / 100);
   }, 0);
 
-  const globalTaxAmount = rawSubtotal * (taxPercent / 100);
   const globalDiscountAmount = rawSubtotal * (discountPercent / 100);
 
-  const grandTotal = rawSubtotal + globalTaxAmount - globalDiscountAmount + freightCost;
+  const grandTotal = rawSubtotal - globalDiscountAmount + freightCost;
 
   // Landed Cost distribution per unit
   const landedItems: AdvPurchaseInvoiceItem[] = items.map((item) => {
-    const lineRaw = item.quantity * item.unit_cost * (1 - item.discount_percent / 100) * (1 + item.tax_percent / 100);
+    const lineRaw = item.quantity * item.unit_cost * (1 - item.discount_percent / 100);
     const shareOfFreight = rawSubtotal > 0 ? (lineRaw / rawSubtotal) * freightCost : 0;
     const landedUnitCost = item.quantity > 0 ? (lineRaw + shareOfFreight) / item.quantity : item.unit_cost;
 
@@ -71,7 +64,7 @@ export default function PurchaseInvoicesPage() {
       quantity: item.quantity,
       unit_cost: item.unit_cost,
       landed_unit_cost: Math.round(landedUnitCost * 100) / 100,
-      tax_rate: item.tax_percent,
+      tax_rate: 0,
       total_cost: Math.round(lineRaw * 100) / 100,
     };
   });
@@ -93,7 +86,7 @@ export default function PurchaseInvoicesPage() {
         status: 'draft',
         subtotal: rawSubtotal,
         discount: totalDiscountAmount + globalDiscountAmount,
-        tax_amount: totalTaxAmount + globalTaxAmount,
+        tax_amount: 0,
         freight_cost: freightCost,
         total_amount: grandTotal,
         paid_amount: paidAmount,
@@ -105,7 +98,6 @@ export default function PurchaseInvoicesPage() {
       setShowModal(false);
       setItems([]);
       setFreightCost(0);
-      setTaxPercent(0);
       setDiscountPercent(0);
       setPaidAmount(0);
     }
@@ -125,7 +117,7 @@ export default function PurchaseInvoicesPage() {
             فواتير المشتريات المتقدمة (Advanced Purchase Invoices)
           </h1>
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
-            تفصيل التكلفة (سعر الشراء الخام + الضريبة % + الخصم % + تكلفة الشحن واللوجستيات) وتحديث WACC آلياً
+            تفصيل التكلفة (سعر الشراء الخام - الخصم + تكلفة الشحن واللوجستيات) وتحديث WACC آلياً
           </p>
         </div>
 
@@ -162,7 +154,7 @@ export default function PurchaseInvoicesPage() {
                 <th className="p-4">المورد</th>
                 <th className="p-4">المجموع التكليفي</th>
                 <th className="p-4">مصاريف الشحن</th>
-                <th className="p-4">الضرائب والخصم</th>
+                <th className="p-4">الخصم</th>
                 <th className="p-4">الإجمالي الكلي (Grand Total)</th>
                 <th className="p-4">الحالة</th>
                 <th className="p-4">إجراءات</th>
@@ -184,7 +176,7 @@ export default function PurchaseInvoicesPage() {
                       <td className="p-4">{supplier ? supplier.name : 'مورد غير محدد'}</td>
                       <td className="p-4 font-mono">{inv.subtotal.toLocaleString()} ج.م</td>
                       <td className="p-4 font-mono text-amber-600 dark:text-amber-400">+{inv.freight_cost || 0} ج.م</td>
-                      <td className="p-4 font-mono text-xs text-slate-400">ضريبة: {inv.tax_amount || 0} | خصم: {inv.discount || 0}</td>
+                      <td className="p-4 font-mono text-xs text-slate-400">خصم: {inv.discount || 0}</td>
                       <td className="p-4 font-mono text-slate-900 dark:text-white font-black">
                         {inv.total_amount.toLocaleString()} ج.م
                       </td>
@@ -327,20 +319,7 @@ export default function PurchaseInvoicesPage() {
                           className="w-16 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-bold text-center"
                         />
 
-                        <input
-                          type="number"
-                          min="0"
-                          placeholder="ضريبة %"
-                          value={item.tax_percent}
-                          onChange={(e) => {
-                            const next = [...items];
-                            next[idx].tax_percent = Number(e.target.value);
-                            setItems(next);
-                          }}
-                          className="w-16 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-xs font-bold text-center"
-                        />
-
-                        <div className="w-24 text-center text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                                        <div className="w-24 text-center text-xs font-bold text-indigo-600 dark:text-indigo-400">
                           {landed ? `${landed.landed_unit_cost} ج.م` : '-'}
                         </div>
 
@@ -369,15 +348,6 @@ export default function PurchaseInvoicesPage() {
                   />
                 </div>
                 <div>
-                  <label className="block font-bold text-slate-500 dark:text-slate-400 mb-1">ضريبة عامة إضافية %</label>
-                  <input
-                    type="number"
-                    value={taxPercent}
-                    onChange={(e) => setTaxPercent(Number(e.target.value))}
-                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 font-bold"
-                  />
-                </div>
-                <div>
                   <label className="block font-bold text-slate-500 dark:text-slate-400 mb-1">خصم مكتسب عام %</label>
                   <input
                     type="number"
@@ -392,7 +362,7 @@ export default function PurchaseInvoicesPage() {
               <div className="flex items-center justify-between p-4 bg-indigo-50 dark:bg-indigo-900/30 rounded-2xl border border-indigo-100 dark:border-indigo-800">
                 <div>
                   <span className="font-bold text-indigo-900 dark:text-indigo-200 block">الإجمالي الكلي النهائي للفاتورة:</span>
-                  <span className="text-xs text-slate-500 dark:text-slate-400">تشمل المجموع + الضريبة - الخصم + الشحن</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">تشمل المجموع - الخصم + الشحن</span>
                 </div>
                 <span className="text-2xl font-black text-indigo-600 dark:text-indigo-400">{grandTotal.toLocaleString()} ج.م</span>
               </div>

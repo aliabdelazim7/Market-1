@@ -386,7 +386,6 @@ export default function DeferredAccounts() {
     const printDate = new Date(order.created_at || Date.now()).toLocaleString('ar-EG', { calendar: 'gregory', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const isPayment = order.type === 'payment';
     const subtotal = isPayment ? order.total : (order.items || []).reduce((sum: number, item: any) => sum + (item.sale_price * item.quantity), 0);
-    const taxValue = isPayment ? 0 : Math.max(0, order.total - (subtotal - (order.discount || 0)));
     
     let debtAfter = 0;
     if ((order.customer || profileCustomer) && !order.is_deleted) {
@@ -535,7 +534,6 @@ export default function DeferredAccounts() {
     <div class="summary-row"><span>المجموع الفرعي:</span><span>${subtotal.toFixed(2)} ${storeSettings.currency}</span></div>
     ${order.coupon_code ? `<div class="summary-row" style="color:#e53e3e;font-weight:700;"><span>كوبون (${order.coupon_code}):</span><span>- ${(order.discount_amount || 0).toFixed(2)} ${storeSettings.currency}</span></div>` : ''}
     ${(order.discount && !order.coupon_code) ? `<div class="summary-row" style="color:#e53e3e;font-weight:700;"><span>خصم الفاتورة:</span><span>- ${order.discount.toFixed(2)} ${storeSettings.currency}</span></div>` : ''}
-    <div class="summary-row"><span>الضريبة (${storeSettings.taxRate}%):</span><span>${taxValue.toFixed(2)} ${storeSettings.currency}</span></div>
     <div class="summary-row total"><span>الإجمالي النهائي:</span><span>${order.total.toFixed(2)} ${storeSettings.currency}</span></div>
     ` : ''}
   

@@ -1603,7 +1603,6 @@ export default function POS() {
     const currentCart = [...cart];
     const currentSubtotal = subtotal;
     const currentDiscount = totalDiscount;
-    const currentTax = tax;
     const currentTotal = total;
     const currentCustomerName = customerName;
     const currentCustomerPhone = customerPhone;
@@ -1677,7 +1676,7 @@ export default function POS() {
       cart: currentCart,
       subtotal: currentSubtotal,
       discount: currentDiscount,
-      tax: currentTax,
+      tax: 0,
       total: currentTotal,
       paidAmount: effectivePaidAmount,
       splitPayments: finalSplit,
@@ -1998,8 +1997,8 @@ export default function POS() {
 
   const totalDiscount = manualDiscount + couponDiscountAmount;
   const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
-  const tax = discountedSubtotal * (storeSettings.taxRate / 100);
-  const total = discountedSubtotal + tax;
+  // الضرائب غير مفعلة في ميدو ماركت: الإجمالي بعد الخصم فقط.
+  const total = discountedSubtotal;
 
 
   // Sync customer debt calculation only

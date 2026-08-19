@@ -37,7 +37,7 @@ export default function PublicInvoice() {
             name: s.name || 'السوبر ماركت',
             currency: s.currency || 'جنيه',
             logo: s.logo || '',
-            taxRate: Number(s.tax_rate || 0),
+            taxRate: 0,
             themeColor: s.theme_color || '#111827',
             address: s.address || '',
             phone: s.phone || '',
@@ -379,11 +379,6 @@ export default function PublicInvoice() {
                 {settings.phone2 ? `${settings.phone2} | ${settings.phone}` : settings.phone}
               </p>
             )}
-            {settings.taxNumber && (
-              <p className="text-[10px] font-black text-slate-900 font-mono mt-0.5" dir="ltr">
-                الرقم الضريبي: {settings.taxNumber} 🏛️
-              </p>
-            )}
             <div className="mt-2 inline-block bg-slate-900 text-white px-3 py-1 rounded-lg text-xs font-black">
               إيصال مبيعات الكاشير
             </div>
@@ -634,7 +629,7 @@ export default function PublicInvoice() {
           <div className="text-right text-base font-black space-y-1 my-4">
             <div>سعر الشحن : 50.0</div>
             <div>المجموع المراد تحصيله</div>
-            <div className="text-xl">{order.total.toFixed(0)} : ( شامل الضريبية)</div>
+            <div className="text-xl">إجمالي الفاتورة: {order.total.toFixed(0)}</div>
             <div className="font-mono text-sm">PRE</div>
           </div>
 

@@ -11,7 +11,6 @@ export default function PurchaseInvoices() {
   // Form state
   const [invSupplierId, setInvSupplierId] = useState('');
   const [invWarehouseId, setInvWarehouseId] = useState('');
-  const [taxAmount, setTaxAmount] = useState<number>(0);
   const [discount, setDiscount] = useState<number>(0);
   const [paidAmount, setPaidAmount] = useState<number>(0);
   const [notes] = useState('');
@@ -34,7 +33,7 @@ export default function PurchaseInvoices() {
 
   // Calculations
   const subtotal = items.reduce((sum, item) => sum + item.quantity * item.unit_cost, 0);
-  const totalAmount = subtotal - discount + taxAmount;
+  const totalAmount = subtotal - discount;
 
   // Landed Cost allocation per unit
   const landedItems: AdvPurchaseInvoiceItem[] = items.map((item) => {
@@ -65,7 +64,7 @@ export default function PurchaseInvoices() {
         status: 'draft',
         subtotal,
         discount,
-        tax_amount: taxAmount,
+        tax_amount: 0,
         freight_cost: 0,
         total_amount: totalAmount,
         paid_amount: paidAmount,
@@ -76,7 +75,6 @@ export default function PurchaseInvoices() {
     if (ok) {
       setShowModal(false);
       setItems([]);
-      setTaxAmount(0);
       setDiscount(0);
       setPaidAmount(0);
     }
@@ -299,15 +297,6 @@ export default function PurchaseInvoices() {
 
               {/* Extra Costs breakdown */}
               <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
-                <div>
-                  <label className="block font-bold text-slate-500 dark:text-slate-400 mb-1">الضرائب</label>
-                  <input
-                    type="number"
-                    value={taxAmount}
-                    onChange={(e) => setTaxAmount(Number(e.target.value))}
-                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-2 font-bold"
-                  />
-                </div>
                 <div>
                   <label className="block font-bold text-slate-500 dark:text-slate-400 mb-1">الخصم المكتسب</label>
                   <input
