@@ -3594,6 +3594,7 @@ export default function POS() {
             <div className="flex-1 flex gap-2 lg:gap-4 justify-center max-w-2xl">
               <div className="relative w-full group flex-1">
                  <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full z-10 shadow-sm opacity-0 group-focus-within:opacity-100 transition-opacity whitespace-nowrap">SCAN (Enter)</span>
+                 <span className="hidden lg:block absolute -bottom-5 right-1 text-[10px] font-bold text-slate-400 dark:text-slate-500 whitespace-nowrap">F2 بحث • F4 تحصيل • F8 تعليق</span>
                  <div className={`relative flex items-center border-2 rounded-2xl transition-colors bg-white dark:bg-slate-800 h-[44px] lg:h-[52px] w-full ${scanStatus === 'success' ? 'border-emerald-500 ring-2 ring-emerald-200' : scanStatus === 'error' ? 'border-red-500 ring-2 ring-red-200' : 'border-indigo-200 dark:border-slate-700 focus-within:border-indigo-500 shadow-inner'}`}>
                    <ScanLine className={`absolute right-2 lg:right-3 ${scanStatus === 'success' ? 'text-emerald-500' : scanStatus === 'error' ? 'text-red-500' : 'text-indigo-500'}`} size={18} />
                    <input
