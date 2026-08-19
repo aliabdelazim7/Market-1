@@ -1803,7 +1803,7 @@ async function allocateInvoiceNumber(): Promise<string> {
 
 export const useStore = create<CashierStore>((set, get) => ({
   storeSettings: {
-    name: 'HANCES System',
+    name: 'ميدو ماركت',
     currency: 'ج.م',
     logo: DEFAULT_LOGO,
     taxRate: 0,
