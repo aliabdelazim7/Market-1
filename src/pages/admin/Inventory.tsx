@@ -884,9 +884,9 @@ export default function Inventory() {
     <div className="p-4 md:p-8 relative">
 
       {/* STATS CARDS */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white dark:bg-slate-800 rounded-[32px] p-6 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center gap-6 group hover:border-indigo-200 transition-all">
-          <div className="w-16 h-16 bg-indigo-50 dark:bg-indigo-950/40 rounded-2xl flex items-center justify-center text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform">
+      <div className="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-4 gap-3 md:gap-6 mb-6 md:mb-8">
+        <div className="bg-white dark:bg-slate-800 rounded-2xl md:rounded-[32px] p-4 md:p-6 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center gap-3 md:gap-6 group hover:border-indigo-200 transition-all">
+          <div className="w-11 h-11 md:w-16 md:h-16 bg-indigo-50 dark:bg-indigo-950/40 rounded-2xl flex items-center justify-center text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform">
             <TrendingUp size={32} />
           </div>
           <div>
@@ -904,9 +904,9 @@ export default function Inventory() {
 
         <div
           onClick={() => setShowIntakeModal(true)}
-          className="bg-white dark:bg-slate-800 rounded-[32px] p-6 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center gap-6 group hover:border-amber-200 transition-all cursor-pointer"
+          className="bg-white dark:bg-slate-800 rounded-2xl md:rounded-[32px] p-4 md:p-6 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center gap-3 md:gap-6 group hover:border-amber-200 transition-all cursor-pointer"
         >
-          <div className="w-16 h-16 bg-amber-50 dark:bg-amber-950/40 rounded-2xl flex items-center justify-center text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform">
+          <div className="w-11 h-11 md:w-16 md:h-16 bg-amber-50 dark:bg-amber-950/40 rounded-2xl flex items-center justify-center text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform">
             <Layers size={32} />
           </div>
           <div>
@@ -918,8 +918,8 @@ export default function Inventory() {
           </div>
         </div>
 
-        <div className="bg-white dark:bg-slate-800 rounded-[32px] p-6 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center gap-6 group hover:border-emerald-200 transition-all">
-          <div className="w-16 h-16 bg-emerald-50 dark:bg-emerald-950/40 rounded-2xl flex items-center justify-center text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform">
+        <div className="bg-white dark:bg-slate-800 rounded-2xl md:rounded-[32px] p-4 md:p-6 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center gap-3 md:gap-6 group hover:border-emerald-200 transition-all">
+          <div className="w-11 h-11 md:w-16 md:h-16 bg-emerald-50 dark:bg-emerald-950/40 rounded-2xl flex items-center justify-center text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform">
             <Box size={32} />
           </div>
           <div>
@@ -932,9 +932,9 @@ export default function Inventory() {
 
         <div 
           onClick={() => setShowLowStock(!showLowStock)}
-          className={`bg-white dark:bg-slate-800 rounded-[32px] p-6 shadow-sm border flex items-center gap-6 group hover:border-red-200 transition-all cursor-pointer ${showLowStock ? 'border-red-500 bg-red-50/20 dark:bg-red-950/20 ring-4 ring-red-50 dark:ring-red-950' : 'border-slate-100 dark:border-slate-700'}`}
+          className={`bg-white dark:bg-slate-800 rounded-2xl md:rounded-[32px] p-4 md:p-6 shadow-sm border flex items-center gap-3 md:gap-6 group hover:border-red-200 transition-all cursor-pointer ${showLowStock ? 'border-red-500 bg-red-50/20 dark:bg-red-950/20 ring-4 ring-red-50 dark:ring-red-950' : 'border-slate-100 dark:border-slate-700'}`}
         >
-          <div className="w-16 h-16 bg-red-50 dark:bg-red-950/40 rounded-2xl flex items-center justify-center text-red-600 dark:text-red-400 group-hover:scale-110 transition-transform">
+          <div className="w-11 h-11 md:w-16 md:h-16 bg-red-50 dark:bg-red-950/40 rounded-2xl flex items-center justify-center text-red-600 dark:text-red-400 group-hover:scale-110 transition-transform">
             <AlertTriangle size={32} />
           </div>
           <div>
