@@ -27,6 +27,67 @@ alter table public.stock_movement_logs add column if not exists reference_type t
 alter table public.stock_movement_logs add column if not exists reference_id text;
 alter table public.stock_movement_logs add column if not exists notes text;
 
+-- Make this migration self-contained: production may have skipped migration 82.
+create table if not exists public.stock_issue_requests (
+  id text primary key default gen_random_uuid()::text,
+  request_number text not null unique,
+  source_warehouse_id text not null,
+  target_warehouse_id text not null,
+  requested_by text,
+  approved_by text,
+  dispatched_by text,
+  received_by text,
+  status text not null default 'draft',
+  notes text,
+  rejection_reason text,
+  requested_at timestamptz not null default now(),
+  approved_at timestamptz,
+  dispatched_at timestamptz,
+  received_at timestamptz,
+  cancelled_at timestamptz,
+  created_at timestamptz not null default now(),
+  check (source_warehouse_id <> target_warehouse_id),
+  check (status in ('draft', 'submitted', 'approved', 'dispatched', 'received', 'rejected', 'cancelled'))
+);
+
+create table if not exists public.stock_issue_request_items (
+  id text primary key default gen_random_uuid()::text,
+  request_id text not null,
+  product_id text not null,
+  requested_quantity numeric not null,
+  approved_quantity numeric,
+  dispatched_quantity numeric,
+  received_quantity numeric,
+  notes text,
+  created_at timestamptz not null default now(),
+  check (requested_quantity > 0),
+  check (approved_quantity is null or approved_quantity >= 0),
+  check (dispatched_quantity is null or dispatched_quantity >= 0),
+  check (received_quantity is null or received_quantity >= 0)
+);
+
+create index if not exists stock_issue_requests_source_idx
+  on public.stock_issue_requests(source_warehouse_id, status, created_at desc);
+create index if not exists stock_issue_requests_target_idx
+  on public.stock_issue_requests(target_warehouse_id, status, created_at desc);
+create index if not exists stock_issue_request_items_request_idx
+  on public.stock_issue_request_items(request_id);
+
+create or replace function public.next_stock_issue_request_number()
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare n bigint;
+begin
+  perform pg_advisory_xact_lock(hashtext('market1-stock-issue-request-number'));
+  select coalesce(max(nullif(regexp_replace(request_number, '\\D', '', 'g'), '')::bigint), 0) + 1
+    into n from public.stock_issue_requests;
+  return 'REQ-' || lpad(n::text, 6, '0');
+end;
+$$;
+
 -- The legacy schema did not always define a unique warehouse/product key.
 -- Consolidate legacy duplicates before enabling the atomic upsert used below.
 with grouped as (
