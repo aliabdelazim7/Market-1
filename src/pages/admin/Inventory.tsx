@@ -2046,7 +2046,7 @@ export default function Inventory() {
                         <button
                           onClick={() => void handleDeleteProduct(product)}
                           className="p-2 text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/15 rounded-lg transition"
-                          title="حذف المنتج نهائيًا"
+                          title="أرشفة المنتج (حذف آمن)"
                         >
                           <Trash2 size={18} />
                         </button>
