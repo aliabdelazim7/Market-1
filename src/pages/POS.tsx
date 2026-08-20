@@ -496,6 +496,7 @@ export default function POS() {
   const [html5QrCode, setHtml5QrCode] = useState<Html5Qrcode | null>(null);
   const [torchOn, setTorchOn] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
+  const scanCandidateRef = useRef({ value: '', count: 0, at: 0 });
 
   const playSuccessSound = () => {
     try {
@@ -1318,6 +1319,7 @@ export default function POS() {
     let scanner: Html5Qrcode | null = null;
     
     if (showCameraScanner && !html5QrCode) {
+      scanCandidateRef.current = { value: '', count: 0, at: 0 };
       // المكتبة بتجرّب كل الـ 17 فورمات في كل فريم لو مش محددين — منهم فورمات
       // تقيلة (PDF417 / Aztec / DataMatrix / MaxiCode) عمرها ما هتتحط على منتج.
       // بنحصرها في باركود المنتجات + QR بس، فكل فريم بيخلص أسرع بكتير.
@@ -1339,7 +1341,7 @@ export default function POS() {
       scanner.start(
         { facingMode: "environment" },
         {
-          fps: 15,
+          fps: 10,
           // مقاس qrbox هو نفسه مقاس الكانفس اللي الديكودر بيشوفه (المكتبة
           // بتصغّر عليه في drawImage)، يعني العرض هنا = عدد البكسلات اللي
           // بتقع على خطوط الباركود. الشباك المربع 250×250 القديم كان بيضيّع
@@ -1360,8 +1362,8 @@ export default function POS() {
             // وبتتعب الموبايلات الرخيصة على الفاضي. 720p بتدي صورة أنضف من
             // الـ 640×480 الافتراضية من غير التكلفة دي. ideal مش exact عشان
             // الكاميرا تنزل لأقل دقة متاحة بدل ما تفشل.
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
             // التركيز المستمر — من غيره الكاميرا بتفضل سايبة الباركود مش واضح،
             // ودي غالباً السبب الأكبر في إن المسح بياخد وقت.
             // focusMode مدعوم في المتصفحات لكنه مش موجود في تعريفات TypeScript،
@@ -1370,21 +1372,29 @@ export default function POS() {
           } as unknown as MediaTrackConstraints,
         },
         (decodedText: string) => {
-          if (scanner && scanner.getState() === 2) { // 2 = SCANNING
-            scanner.pause();
-          }
-          const product = useStore.getState().products.find(p => p.barcode === decodedText);
-          if (product) {
-            playSuccessSound();
-            setScannedProduct(product);
-            setScanQty(1);
+          const value = String(decodedText || '').trim();
+          if (!value) return;
+          const now = Date.now();
+          const candidate = scanCandidateRef.current;
+          if (candidate.value === value && now - candidate.at < 1200) {
+            candidate.count += 1;
           } else {
-            playErrorSound();
-            alert('لم يتم العثور على المنتج');
-            if (scanner && scanner.getState() === 3) { // 3 = PAUSED
-              scanner.resume();
-            }
+            scanCandidateRef.current = { value, count: 1, at: now };
+            return;
           }
+          if (candidate.count < 2) return;
+          const normalized = value.replace(/\s+/g, '');
+          const product = useStore.getState().products.find(p => String(p.barcode || '').trim().replace(/\s+/g, '') === normalized);
+          if (!product) {
+            scanCandidateRef.current = { value: '', count: 0, at: 0 };
+            playErrorSound();
+            return;
+          }
+          scanCandidateRef.current = { value: '', count: 0, at: 0 };
+          if (scanner && scanner.getState() === 2) scanner.pause();
+          playSuccessSound();
+          setScannedProduct(product);
+          setScanQty(1);
         },
         (_error: any) => {
           // ignore continuous scan errors
