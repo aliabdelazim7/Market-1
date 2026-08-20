@@ -493,25 +493,23 @@ export default function Inventory() {
     ));
     const hasStockMovements = stockIntakes.some((intake: any) => String(intake.product_id ?? '') === productId);
     const currentStock = Number(product.stock_quantity) || 0;
+    const historyNote = hasSales || hasPurchases || hasStockMovements
+      ? '\n\nالفواتير والحسابات وحركات المخزون ستظل محفوظة وتستمر في الحساب.'
+      : '';
 
-    if (hasSales || hasPurchases || hasStockMovements || currentStock > 0) {
-      const reasons = [
-        hasSales && 'فواتير مبيعات',
-        hasPurchases && 'فواتير مشتريات',
-        hasStockMovements && 'حركات مخزون',
-        currentStock > 0 && `رصيد مخزون ${formatQty(currentStock, product.unit)}`,
-      ].filter(Boolean).join('، ');
-      alert(`لا يمكن حذف المنتج «${product.name}» لأنه مرتبط ببيانات محفوظة: ${reasons}. استخدم زر الإخفاء بدلًا من الحذف للحفاظ على دقة الحسابات.`);
-      return;
-    }
-
-    if (!confirm(`حذف المنتج «${product.name}» نهائيًا؟\nلن يمكن استرجاعه بعد الحذف.`)) return;
+    if (!confirm(`إخفاء المنتج «${product.name}» من التشغيل؟${historyNote}\n\nسيتم استخدام حذف آمن (أرشفة) ولن يتم حذف بيانات المنتج من قاعدة البيانات.`)) return;
     try {
       await useStore.getState().deleteProduct(product.id);
-      useStore.setState(state => ({ products: state.products.filter(p => String(p.id) !== productId) }));
+      // لا نحذف المنتج من الذاكرة؛ نعلّمه مخفيًا حتى تظل أي فاتورة قديمة قابلة للعرض.
+      useStore.setState(state => ({
+        products: state.products.map(p => String(p.id) === productId ? { ...p, is_hidden: true } : p),
+      }));
+      if (currentStock > 0) {
+        alert(`تمت أرشفة المنتج بأمان. الرصيد الحالي ${formatQty(currentStock, product.unit)} لم يتغير، والفواتير والحسابات محفوظة.`);
+      }
     } catch (error: any) {
-      console.error('delete product error:', error);
-      alert(`تعذّر حذف المنتج: ${error?.message || 'حدث خطأ غير متوقع'}`);
+      console.error('archive product error:', error);
+      alert(`تعذّرت أرشفة المنتج: ${error?.message || 'حدث خطأ غير متوقع'}`);
     }
   };
 

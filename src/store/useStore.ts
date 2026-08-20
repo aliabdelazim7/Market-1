@@ -5785,12 +5785,21 @@ setupRealtime: () => {
   },
 
   deleteProduct: async (id) => {
-    const { error } = await supabase.from('products').delete().eq('id', id);
+    // حذف منطقي فقط: نحافظ على صف المنتج حتى تظل invoice items
+    // وحركات المخزون والفواتير التاريخية قابلة للقراءة والحساب.
+    const { error } = await supabase
+      .from('products')
+      .update({ is_hidden: true })
+      .eq('id', id);
     if (error) {
-      console.error('deleteProduct error:', error);
+      console.error('archiveProduct error:', error);
       throw error;
     }
-    set((state) => ({ products: state.products.filter((product) => product.id !== id) }));
+    set((state) => ({
+      products: state.products.map((product) =>
+        product.id === id ? { ...product, is_hidden: true } : product
+      ),
+    }));
   },
 
   // تسوية الجرد: تحديث مخزون المنتجات للكمية المجرودة وتسجيل الفروق.
