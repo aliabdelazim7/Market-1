@@ -15,6 +15,41 @@ export default function Inventory() {
   const { products, categories, storeSettings, addProduct, updateProduct, orders, suppliers, addSupplier,
     stockIntakes, purchaseInvoices, logStockIntake, deleteStockIntake } = useStore();
 
+  const handleImageDataUrl = (rawUrl: string) => {
+    if (!rawUrl) return;
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const MAX_DIM = 800;
+      let width = img.width;
+      let height = img.height;
+      if (width > height && width > MAX_DIM) {
+        height = Math.round((height * MAX_DIM) / width);
+        width = MAX_DIM;
+      } else if (height >= width && height > MAX_DIM) {
+        width = Math.round((width * MAX_DIM) / height);
+        height = MAX_DIM;
+      }
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        setFormData(prev => ({ ...prev, image_url: rawUrl }));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      const MAX_CHARS = 300 * 1024;
+      let compressed = canvas.toDataURL('image/jpeg', 0.85);
+      for (const q of [0.7, 0.55, 0.4]) {
+        if (compressed.length <= MAX_CHARS) break;
+        compressed = canvas.toDataURL('image/jpeg', q);
+      }
+      setFormData(prev => ({ ...prev, image_url: compressed }));
+    };
+    img.onerror = () => setFormData(prev => ({ ...prev, image_url: rawUrl }));
+    img.src = rawUrl;
+  };
+
   const handleImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -23,52 +58,7 @@ export default function Inventory() {
       return;
     }
     const reader = new FileReader();
-    reader.onload = (event) => {
-      const rawUrl = event.target?.result as string;
-      if (!rawUrl) return;
-
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const MAX_DIM = 800;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > MAX_DIM) {
-            height = Math.round((height * MAX_DIM) / width);
-            width = MAX_DIM;
-          }
-        } else {
-          if (height > MAX_DIM) {
-            width = Math.round((width * MAX_DIM) / height);
-            height = MAX_DIM;
-          }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          // الصورة بتتخزّن data URL جوه صف المنتج، وصفوف المنتجات بتتحمّل كلها
-          // مع كل فتح للكاشير — فبننزّل الجودة لحد ما الصورة تبقى تحت ~٣٠٠ كيلو
-          // عشان مية منتج ما يبقوش عشرات الميجات على الشاشة.
-          const MAX_CHARS = 300 * 1024;
-          let compressed = canvas.toDataURL('image/jpeg', 0.85);
-          for (const q of [0.7, 0.55, 0.4]) {
-            if (compressed.length <= MAX_CHARS) break;
-            compressed = canvas.toDataURL('image/jpeg', q);
-          }
-          setFormData(prev => ({ ...prev, image_url: compressed }));
-        } else {
-          setFormData(prev => ({ ...prev, image_url: rawUrl }));
-        }
-      };
-      img.onerror = () => {
-        setFormData(prev => ({ ...prev, image_url: rawUrl }));
-      };
-      img.src = rawUrl;
-    };
+    reader.onload = (event) => handleImageDataUrl(event.target?.result as string);
     reader.readAsDataURL(file);
   };
   const [searchQuery, setSearchQuery] = useState('');
@@ -82,13 +72,77 @@ export default function Inventory() {
   
   const [showAddModal, setShowAddModal] = useState(false);
   const [showBarcodeCameraModal, setShowBarcodeCameraModal] = useState(false);
+  const [showPhotoCameraModal, setShowPhotoCameraModal] = useState(false);
+  const [photoCameraReady, setPhotoCameraReady] = useState(false);
+  const scanCandidateRef = useRef({ value: '', count: 0, at: 0 });
+  const barcodeScannerRef = useRef<Html5Qrcode | null>(null);
+  const [barcodeTorchSupported, setBarcodeTorchSupported] = useState(false);
+  const [barcodeTorchOn, setBarcodeTorchOn] = useState(false);
+  const photoVideoRef = useRef<HTMLVideoElement>(null);
+  const photoStreamRef = useRef<MediaStream | null>(null);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [scanSuccess, setScanSuccess] = useState(false);
+
+  useEffect(() => {
+    if (!showPhotoCameraModal) return;
+    let active = true;
+    const startPhotoCamera = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false,
+        });
+        if (!active) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        photoStreamRef.current = stream;
+        if (photoVideoRef.current) {
+          photoVideoRef.current.srcObject = stream;
+          await photoVideoRef.current.play();
+        }
+        setPhotoCameraReady(true);
+      } catch (error) {
+        console.error('Product photo camera error:', error);
+        alert('تعذّر تشغيل الكاميرا. اسمح بالوصول للكاميرا ثم حاول مرة أخرى.');
+        setShowPhotoCameraModal(false);
+      }
+    };
+    startPhotoCamera();
+    return () => {
+      active = false;
+      photoStreamRef.current?.getTracks().forEach(track => track.stop());
+      photoStreamRef.current = null;
+      setPhotoCameraReady(false);
+    };
+  }, [showPhotoCameraModal]);
+
+  const captureProductPhoto = () => {
+    const video = photoVideoRef.current;
+    if (!video || !photoCameraReady || video.videoWidth === 0) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    handleImageDataUrl(canvas.toDataURL('image/jpeg', 0.92));
+    setShowPhotoCameraModal(false);
+  };
 
   useEffect(() => {
     if (!showBarcodeCameraModal) return;
     let scanner: Html5Qrcode | null = null;
     let isStopped = false;
+    scanCandidateRef.current = { value: '', count: 0, at: 0 };
+
+    const stopScanner = () => {
+      if (scanner && scanner.isScanning) {
+        scanner.stop().then(() => scanner?.clear()).catch(console.warn);
+      } else {
+        try { scanner?.clear(); } catch (_) {}
+      }
+    };
 
     const startScanner = async () => {
       try {
@@ -103,41 +157,90 @@ export default function Inventory() {
             Html5QrcodeSupportedFormats.ITF,
             Html5QrcodeSupportedFormats.QR_CODE,
           ],
+          useBarCodeDetectorIfSupported: true,
           verbose: false,
         });
 
+        barcodeScannerRef.current = scanner;
         await scanner.start(
-          { facingMode: 'environment' },
-          { fps: 15, qrbox: { width: 250, height: 180 } },
+          { facingMode: { ideal: 'environment' } },
+          {
+            fps: 10,
+            qrbox: (viewfinderWidth: number, viewfinderHeight: number) => ({
+              width: Math.floor(viewfinderWidth * 0.92),
+              height: Math.floor(Math.min(viewfinderHeight * 0.52, Math.max(viewfinderHeight * 0.34, 160))),
+            }),
+            disableFlip: true,
+            videoConstraints: {
+              facingMode: { ideal: 'environment' },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+              advanced: [{ focusMode: 'continuous' }],
+            } as unknown as MediaTrackConstraints,
+          },
           (decodedText) => {
             if (isStopped) return;
-            isStopped = true;
-            setFormData(prev => ({ ...prev, barcode: decodedText }));
-            setScanSuccess(true);
-            try { navigator.vibrate?.(100); } catch (_) {}
-            playSuccessSound();
-            if (scanner && scanner.isScanning) {
-              scanner.stop().then(() => scanner?.clear()).catch(console.warn);
+            const value = String(decodedText || '').trim();
+            if (!value) return;
+            const now = Date.now();
+            const candidate = scanCandidateRef.current;
+            if (candidate.value === value && now - candidate.at < 1200) {
+              candidate.count += 1;
+            } else {
+              scanCandidateRef.current = { value, count: 1, at: now };
+              return;
             }
+            if (candidate.count < 2) return;
+            const normalized = value.replace(/\s+/g, '');
+            const product = useStore.getState().products.find(p => String(p.barcode || '').trim().replace(/\s+/g, '') === normalized);
+            if (!product) {
+              scanCandidateRef.current = { value: '', count: 0, at: 0 };
+              playErrorSound();
+              return;
+            }
+            isStopped = true;
+            setFormData(prev => ({ ...prev, barcode: String(product.barcode) }));
+            setScanSuccess(true);
+            try { navigator.vibrate?.([80, 40, 80]); } catch (_) {}
+            playSuccessSound();
+            stopScanner();
             setShowBarcodeCameraModal(false);
             setTimeout(() => setScanSuccess(false), 2000);
           },
           () => {}
         );
+        try {
+          setBarcodeTorchSupported(scanner.getRunningTrackCameraCapabilities().torchFeature().isSupported());
+        } catch (_) {
+          setBarcodeTorchSupported(false);
+        }
       } catch (err) {
         console.warn('Camera barcode scanner error:', err);
+        alert('تعذّر تشغيل الكاميرا. تأكد من السماح بالكاميرا وتجربة إضاءة جيدة.');
+        setShowBarcodeCameraModal(false);
       }
     };
 
     startScanner();
-
     return () => {
       isStopped = true;
-      if (scanner && scanner.isScanning) {
-        scanner.stop().then(() => scanner?.clear()).catch(console.warn);
-      }
+      stopScanner();
+      barcodeScannerRef.current = null;
+      setBarcodeTorchOn(false);
+      setBarcodeTorchSupported(false);
     };
   }, [showBarcodeCameraModal]);
+
+  const toggleBarcodeTorch = async () => {
+    try {
+      const torch = barcodeScannerRef.current?.getRunningTrackCameraCapabilities().torchFeature();
+      if (!torch?.isSupported()) return;
+      await torch.apply(!barcodeTorchOn);
+      setBarcodeTorchOn(value => !value);
+    } catch (_) {
+      setBarcodeTorchSupported(false);
+    }
+  };
 
   const playSuccessSound = () => {
     try {
@@ -1101,10 +1204,19 @@ export default function Inventory() {
                     <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
                       🖼️ صورة المنتج (URL) <span className="text-[10px] text-slate-400 dark:text-slate-500">(تظهر بالمجدول والسيستم)</span>
                     </label>
-                    <label className="cursor-pointer px-3 py-1 bg-indigo-50 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-500/30 rounded-xl font-bold text-xs flex items-center gap-1 transition border border-indigo-200 dark:border-indigo-500/30 shrink-0">
-                      <Upload size={13} /> رفع صورة من الجهاز
-                      <input type="file" accept="image/*" className="hidden" onChange={handleImageFileUpload} />
-                    </label>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setShowPhotoCameraModal(true)}
+                        className="cursor-pointer px-3 py-1 bg-emerald-50 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-500/30 rounded-xl font-bold text-xs flex items-center gap-1 transition border border-emerald-200 dark:border-emerald-500/30"
+                      >
+                        <Camera size={13} /> تصوير بالكاميرا
+                      </button>
+                      <label className="cursor-pointer px-3 py-1 bg-indigo-50 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-500/30 rounded-xl font-bold text-xs flex items-center gap-1 transition border border-indigo-200 dark:border-indigo-500/30">
+                        <Upload size={13} /> رفع من الجهاز
+                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageFileUpload} />
+                      </label>
+                    </div>
                   </div>
                   <div className="flex gap-3 items-center">
                     <input
@@ -1316,6 +1428,30 @@ export default function Inventory() {
           </div>
         </div>
       )}
+      {/* PRODUCT PHOTO CAMERA MODAL */}
+      {showPhotoCameraModal && (
+        <div className="fixed inset-0 z-[120] bg-black flex items-center justify-center p-3">
+          <div className="w-full max-w-lg bg-slate-950 text-white rounded-3xl overflow-hidden shadow-2xl border border-slate-800">
+            <div className="px-4 py-3 flex items-center justify-between border-b border-white/10">
+              <div className="flex items-center gap-2 font-black"><Camera size={20} className="text-emerald-400" /> تصوير المنتج</div>
+              <button type="button" onClick={() => setShowPhotoCameraModal(false)} className="p-2 rounded-xl bg-white/10 hover:bg-white/20"><X size={18} /></button>
+            </div>
+            <div className="p-3 space-y-3">
+              <div className="relative aspect-[4/3] rounded-2xl overflow-hidden bg-black border border-white/10">
+                <video ref={photoVideoRef} playsInline muted className="w-full h-full object-cover" />
+                {!photoCameraReady && <div className="absolute inset-0 flex items-center justify-center text-sm font-bold text-white/70">جاري تشغيل الكاميرا...</div>}
+                <div className="absolute inset-5 rounded-2xl border-2 border-white/50 pointer-events-none" />
+              </div>
+              <p className="text-center text-xs text-white/70 font-bold">ضع المنتج في المنتصف وبإضاءة جيدة ثم اضغط التقاط الصورة</p>
+              <div className="flex gap-2">
+                <button type="button" onClick={captureProductPhoto} disabled={!photoCameraReady} className="flex-1 bg-emerald-500 disabled:opacity-40 text-slate-950 font-black py-3.5 rounded-2xl">التقاط الصورة</button>
+                <button type="button" onClick={() => setShowPhotoCameraModal(false)} className="px-5 bg-white/10 hover:bg-white/20 text-white font-bold py-3.5 rounded-2xl">إلغاء</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CAMERA BARCODE SCANNER MODAL FOR PRODUCT ADD/EDIT */}
       {showBarcodeCameraModal && (
         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
@@ -1335,20 +1471,28 @@ export default function Inventory() {
             </div>
 
             <p className="text-xs text-slate-300 text-center font-bold">
-              وجه كاميرا الجهاز نحو الباركود الموجود على المنتج للالتقاط التلقائي
+              ثبّت المنتج داخل الإطار، قرّب الكاميرا حتى تظهر الخطوط بوضوح، وسيتم اعتماد القراءة بعد التأكد منها مرتين
             </p>
 
             <div className="relative w-full h-64 bg-black rounded-2xl overflow-hidden border border-slate-700 flex items-center justify-center">
+              <div className="absolute z-10 inset-x-8 top-1/2 -translate-y-1/2 border-2 border-emerald-400/80 rounded-xl pointer-events-none" />
               <div id="modal-barcode-reader" className="w-full h-full" />
             </div>
 
-            <button
-              type="button"
-              onClick={() => setShowBarcodeCameraModal(false)}
-              className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold py-3 rounded-xl text-sm transition"
-            >
-              إلغاء
-            </button>
+            <div className="flex gap-2">
+              {barcodeTorchSupported && (
+                <button type="button" onClick={toggleBarcodeTorch} className={`flex-1 ${barcodeTorchOn ? 'bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-200'} font-bold py-3 rounded-xl text-sm transition`}>
+                  {barcodeTorchOn ? 'إطفاء الكشاف' : 'تشغيل الكشاف'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowBarcodeCameraModal(false)}
+                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold py-3 rounded-xl text-sm transition"
+              >
+                إلغاء
+              </button>
+            </div>
           </div>
         </div>
       )}
