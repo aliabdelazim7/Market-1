@@ -483,6 +483,38 @@ export default function Inventory() {
     }
   };
 
+  const handleDeleteProduct = async (product: Product) => {
+    const productId = String(product.id);
+    const hasSales = orders.some((order: any) => (order.items || []).some((item: any) =>
+      String(item.product_id ?? item.productId ?? '') === productId
+    ));
+    const hasPurchases = purchaseInvoices.some((invoice: any) => (invoice.items || []).some((item: any) =>
+      String(item.product_id ?? item.productId ?? '') === productId
+    ));
+    const hasStockMovements = stockIntakes.some((intake: any) => String(intake.product_id ?? '') === productId);
+    const currentStock = Number(product.stock_quantity) || 0;
+
+    if (hasSales || hasPurchases || hasStockMovements || currentStock > 0) {
+      const reasons = [
+        hasSales && 'فواتير مبيعات',
+        hasPurchases && 'فواتير مشتريات',
+        hasStockMovements && 'حركات مخزون',
+        currentStock > 0 && `رصيد مخزون ${formatQty(currentStock, product.unit)}`,
+      ].filter(Boolean).join('، ');
+      alert(`لا يمكن حذف المنتج «${product.name}» لأنه مرتبط ببيانات محفوظة: ${reasons}. استخدم زر الإخفاء بدلًا من الحذف للحفاظ على دقة الحسابات.`);
+      return;
+    }
+
+    if (!confirm(`حذف المنتج «${product.name}» نهائيًا؟\nلن يمكن استرجاعه بعد الحذف.`)) return;
+    try {
+      await useStore.getState().deleteProduct(product.id);
+      useStore.setState(state => ({ products: state.products.filter(p => String(p.id) !== productId) }));
+    } catch (error: any) {
+      console.error('delete product error:', error);
+      alert(`تعذّر حذف المنتج: ${error?.message || 'حدث خطأ غير متوقع'}`);
+    }
+  };
+
   const handleAddCategory = async () => {
     const name = newCategoryName.trim();
     if (!name) return;
@@ -2013,7 +2045,14 @@ export default function Inventory() {
                         >
                           <Printer size={18} />
                         </button>
-                        {/* زر الإخفاء/الإظهار بدلاً من الحذف */}
+                        <button
+                          onClick={() => void handleDeleteProduct(product)}
+                          className="p-2 text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/15 rounded-lg transition"
+                          title="حذف المنتج نهائيًا"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                        {/* زر الإخفاء/الإظهار — البديل الآمن للمنتجات المرتبطة بفواتير */}
                         <button
                           onClick={() => handleToggleHide(product)}
                           className={`p-2 rounded-lg transition ${

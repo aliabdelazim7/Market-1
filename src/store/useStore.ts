@@ -5785,8 +5785,12 @@ setupRealtime: () => {
   },
 
   deleteProduct: async (id) => {
-    // Realtime subscription handles the live DELETE — no need to broadcast
-    await supabase.from('products').delete().eq('id', id);
+    const { error } = await supabase.from('products').delete().eq('id', id);
+    if (error) {
+      console.error('deleteProduct error:', error);
+      throw error;
+    }
+    set((state) => ({ products: state.products.filter((product) => product.id !== id) }));
   },
 
   // تسوية الجرد: تحديث مخزون المنتجات للكمية المجرودة وتسجيل الفروق.
