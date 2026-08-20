@@ -67,16 +67,32 @@ async function loadDayBudgetSource(dayStr: string, start: Date, end: Date, local
     const { fetchAllRows } = await import('../lib/supabase');
     // جلب كل الصفوف (تخطّي حد 1000) عشان الرصيد الافتتاحي وحركة «قبل اليوم» تطلع صح.
     // للطلبات: select('*') عشان نتفادى خطأ عمود refunded_at لو الـmigration لسه ما اتشغّلتش.
-    const [expenses, purchases, salaries, ordData] = await Promise.all([
+    const [expenses, purchases, salaries, ordData, itemData] = await Promise.all([
       fetchAllRows('expenses'),
       fetchAllRows('purchase_invoices'),
       fetchAllRows('employee_transactions'),
-      fetchAllRows('orders', '*, order_items(refunded_amount)'),
+      // لا نعتمد على nested select هنا؛ بعض قواعد البيانات القديمة لا تحتوي
+      // foreign key قابلًا للاكتشاف بين orders وorder_items رغم أن العمودين موجودان.
+      fetchAllRows('orders'),
+      // order_items في schema القديمة قد لا يحتوي created_at، لذلك نرتّبه بالـ id.
+      fetchAllRows('order_items', '*', { column: 'id', ascending: true }),
     ]);
+    const itemsByOrder = new Map<string, any[]>();
+    (itemData as any[]).forEach((item) => {
+      const key = String(item.order_id ?? '');
+      if (!key) return;
+      const list = itemsByOrder.get(key) || [];
+      list.push(item);
+      itemsByOrder.set(key, list);
+    });
+    const normalizedOrders = (ordData as any[]).map((order) => ({
+      ...order,
+      order_items: itemsByOrder.get(String(order.id)) || [],
+    }));
     return {
       live: true, cachedAt: null as string | null, rolledFrom: null as string | null,
       expenses, purchases, salaries,
-      orders: mergeOffline((ordData as any[]).map(asNetworkOrder)),
+      orders: mergeOffline(normalizedOrders.map(asNetworkOrder)),
       seedBefIn: null as Record<string, number> | null,
       seedBefOut: null as Record<string, number> | null,
     };
