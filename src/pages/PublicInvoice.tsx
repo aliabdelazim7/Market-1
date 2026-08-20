@@ -35,7 +35,7 @@ export default function PublicInvoice() {
         if (s) {
           setSettings({
             name: s.name || 'السوبر ماركت',
-            currency: s.currency || 'جنيه',
+            currency: String(s.currency || 'ج.م').replace(/جج\.م/g, 'ج.م'),
             logo: s.logo || '',
             taxRate: 0,
             themeColor: s.theme_color || '#111827',
@@ -54,7 +54,7 @@ export default function PublicInvoice() {
           }
         } else {
           setSettings({
-            name: 'السوبر ماركت', currency: 'جنيه', logo: '', taxRate: 0,
+            name: 'السوبر ماركت', currency: 'ج.م', logo: '', taxRate: 0,
             themeColor: '#111827', address: '', phone: '', phone2: '',
             whatsappCountryCode: '+20', initial_balance: 0,
             locationUrl: '', taxNumber: '', commercialRecord: '',

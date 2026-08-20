@@ -1199,7 +1199,7 @@ interface CashierStore {
   deleteWriteOff: (id: string) => Promise<void>;
 
   // Expenses
-  addExpense: (expense: Omit<Expense, 'id' | 'date'>) => Promise<void>;
+  addExpense: (expense: Omit<Expense, 'id' | 'date'>) => Promise<boolean>;
   managerWithdraw: (managerName: string, split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, fromMain?: boolean) => Promise<boolean>;
   recordPartnerTransaction: (tx: { partner_id: string; partner_name: string; type: 'deposit' | 'withdraw'; amount: number; treasury?: 'shop' | 'main'; method: string; note?: string }) => Promise<boolean>;
   deletePartnerTransaction: (tx: { id: string; group_id?: string | null; treasury?: string; partner_name?: string; type?: 'deposit' | 'withdraw'; amount?: number }) => Promise<boolean>;
@@ -1370,10 +1370,16 @@ interface CashierStore {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
+function normalizeCurrency(value: unknown): string {
+  const currency = String(value ?? '').trim();
+  if (!currency) return 'ج.م';
+  return currency.replace(/جج\.م/g, 'ج.م');
+}
+
 function mapSettings(row: Record<string, unknown>): StoreSettings {
   return {
     name: (row.name as string) ?? 'محلي',
-    currency: (row.currency as string) ?? 'ج.م',
+    currency: normalizeCurrency(row.currency),
     logo: (row.logo as string) || DEFAULT_LOGO,
     taxRate: (row.tax_rate as number) ?? 0,
     themeColor: (row.theme_color as string) ?? '#4f46e5',
@@ -2047,7 +2053,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       if (snap) {
         set((state) => ({
           cashiers: (snap.cashiers || []) as Cashier[],
-          storeSettings: snap.settings || state.storeSettings,
+          storeSettings: snap.settings ? { ...snap.settings, currency: normalizeCurrency((snap.settings as any).currency) } : state.storeSettings,
           isOfflineMode: true,
           offlineSnapshotAt: snap.savedAt || null,
         }));
@@ -2068,7 +2074,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       if (snap) {
         set((state) => ({
           cashiers: (snap.cashiers || []) as Cashier[],
-          storeSettings: snap.settings || state.storeSettings,
+          storeSettings: snap.settings ? { ...snap.settings, currency: normalizeCurrency((snap.settings as any).currency) } : state.storeSettings,
           isOfflineMode: true,
           offlineSnapshotAt: snap.savedAt || null,
         }));
@@ -2081,7 +2087,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       storeSettings: {
         ...state.storeSettings,
         name: s.name ?? state.storeSettings.name,
-        currency: s.currency ?? state.storeSettings.currency,
+        currency: normalizeCurrency(s.currency ?? state.storeSettings.currency),
         logo: s.logo ?? state.storeSettings.logo,
         themeColor: s.theme_color ?? state.storeSettings.themeColor,
       },
@@ -2413,7 +2419,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     const cashiers = (snap.cashiers || []) as Cashier[];
     const activeName = sessionStorage.getItem('active_cashier_name');
     set({
-      storeSettings: snap.settings || get().storeSettings,
+      storeSettings: snap.settings ? { ...snap.settings, currency: normalizeCurrency((snap.settings as any).currency) } : get().storeSettings,
       categories: (snap.categories || []) as Category[],
       products: (snap.products || []) as Product[],
       customers: (snap.customers || []) as Customer[],
@@ -5972,7 +5978,7 @@ setupRealtime: () => {
       alert(isClosingEntry
         ? 'هذا اليوم مقفول بالفعل. لا يمكن تقفيله مرة أخرى.'
         : `اليوم ${businessDateStr(state.storeSettings, dateValueForAccounting(expenseDate))} تم تقفيله بالفعل. لا يمكن إضافة أو تعديل أو حذف أي حركة مالية في يوم مقفول.`);
-      return;
+      return false;
     }
     const { data, error } = await supabase.from('expenses').insert({
       category: expense.category,
@@ -5994,7 +6000,7 @@ setupRealtime: () => {
 
     if (error) {
       console.error("Add Expense Error:", error);
-      return;
+      return false;
     }
 
     if (data) {
@@ -6016,6 +6022,7 @@ setupRealtime: () => {
       };
       set((state) => ({ expenses: [newExp, ...state.expenses] }));
     }
+    return true;
   },
 
   // سحب المدير: يُسجّل كمصروف "سحب مدير" (يخصم من الخزنة) + تنبيه تليجرام. لا يُحذف.
@@ -6145,30 +6152,50 @@ setupRealtime: () => {
   // كمصروف (تحويل للرئيسية) أو إيراد (تحويل من الرئيسية)، ويُسجَّل في دفتر الخزنة الرئيسية.
   savingsTransfer: async (split, direction, source, note, dateISO) => {
     const state = get();
-    if (await isAccountingDayClosed(state.storeSettings, dateISO || new Date())) {
-      alert('هذا اليوم مقفول بالفعل. لا يمكن تقفيله مرة أخرى أو تسجيل تحويلات على يوم مقفول.');
-      return false;
-    }
     const s = { cash: Number(split?.cash) || 0, visa: Number(split?.visa) || 0, wallet: Number(split?.wallet) || 0, instapay: Number(split?.instapay) || 0, method5: Number(split?.method5) || 0, method6: Number(split?.method6) || 0 };
     const total = s.cash + s.visa + s.wallet + s.instapay + s.method5 + s.method6;
     if (total <= 0) return false;
-    const primary = primaryOfSplit(s);
-    const groupId = newGroupId(); // يربط صف المصروف بصفوف دفتر الخزنة الرئيسية للحذف لاحقاً
 
-    // دفتر الخزنة الرئيسية: صف لكل طريقة بمبلغ (بنفس تاريخ التقفيل لو اتبعت).
-    // نُدرجه أولاً ونفحص الخطأ — عشان لو فشل الإدراج (مثلاً عمود group_id غير موجود)
-    // ما نسجّلش مصروف خزنة المحل ونسيب الحسابات مختلّة (كان الإدراج بدون فحص قبل كده).
+    // التقفيل هو العملية الوحيدة التي يجب أن تكون atomic: RPC يقفل اليوم داخل
+    // PostgreSQL، يفحص وجود تقفيل سابق، ثم يكتب دفتر الرئيسية وقيد درج المحل
+    // في transaction واحدة. هذا يمنع الضغط المزدوج وفشل أحد القيدين منفرداً.
+    if (source === 'day_closing' && direction === 'in') {
+      const closingDay = businessDateStr(state.storeSettings, dateISO ? new Date(dateISO) : new Date());
+      const { data, error } = await supabase.rpc('create_day_closing_atomic', {
+        p_day: closingDay,
+        p_split: s,
+        p_note: note || null,
+      });
+      if (!error && (data as any)?.ok) {
+        sendTelegramAlert({ type: 'savings_in', actor: getActorName(get()), currency: get().storeSettings.currency, description: `تقفيل يوم ${closingDay}: ${total.toFixed(2)}`, amount: total, paymentMethod: primaryOfSplit(s), date: new Date().toISOString() });
+        return true;
+      }
+      const msg = String(error?.message || '');
+      if (msg.includes('day_already_closed')) {
+        alert('هذا اليوم مقفول بالفعل. لا يمكن تقفيله مرة أخرى.');
+        return false;
+      }
+      // قواعد البيانات التي لم تُطبّق db/82 بعد تستمر مؤقتاً بالمسار القديم.
+      if (!msg.toLowerCase().includes('create_day_closing_atomic') && !msg.toLowerCase().includes('schema cache')) {
+        console.error('Atomic day closing failed:', error);
+        alert('تعذّر تنفيذ تقفيل اليوم: ' + (error?.message || 'خطأ غير معروف'));
+        return false;
+      }
+      console.warn('create_day_closing_atomic غير متاح — استخدام fallback مؤقتاً.', error?.message);
+    } else if (await isAccountingDayClosed(state.storeSettings, dateISO || new Date())) {
+      alert('هذا اليوم مقفول بالفعل. لا يمكن تقفيله مرة أخرى أو تسجيل تحويلات على يوم مقفول.');
+      return false;
+    }
+
+    const primary = primaryOfSplit(s);
+    const groupId = newGroupId();
     const rows = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
       .filter((m) => s[m] > 0)
       .map((m) => ({ direction, amount: s[m], method: m, source: source || 'manual', note: note || null, group_id: groupId, ...(dateISO ? { created_at: dateISO } : {}) }));
-    if (rows.length) {
-      const { error } = await supabase.from('savings_transactions').insert(rows);
-      if (error) { console.error('savingsTransfer savings insert error:', error); alert('تعذّر تسجيل حركة الخزنة الرئيسية' + (String(error.message || '').includes('group_id') ? ' — شغّلي db/39_savings_group_id.sql أولاً.' : '')); return false; }
-    }
+    const { error: savingsError } = await supabase.from('savings_transactions').insert(rows);
+    if (savingsError) { console.error('savingsTransfer savings insert error:', savingsError); alert('تعذّر تسجيل حركة الخزنة الرئيسية' + (String(savingsError.message || '').includes('group_id') ? ' — شغّلي db/39_savings_group_id.sql أولاً.' : '')); return false; }
 
-    // انعكاس على خزنة المحل — نثبّت التاريخ (created_at) على اليوم المحاسبي المُقفَل لو اتبعت،
-    // عشان تقفيل يوم 8 (لو اتعمل فعلياً في يوم 9) يتحسب على يوم 8 مش يوم 9.
-    await get().addExpense({
+    const expenseOk = await get().addExpense({
       category: direction === 'in' ? 'تحويل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية',
       amount: direction === 'in' ? total : -total,
       note: markSavingsGroupNote(note || (direction === 'in' ? 'تحويل من المحل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية للمحل'), groupId),
@@ -6176,16 +6203,13 @@ setupRealtime: () => {
       paid_cash: s.cash, paid_visa: s.visa, paid_wallet: s.wallet, paid_instapay: s.instapay, paid_method5: s.method5 || 0, paid_method6: s.method6 || 0,
       ...(dateISO ? { created_at: dateISO } : {}),
     } as Omit<Expense, 'id' | 'date'>);
+    if (!expenseOk) {
+      await supabase.from('savings_transactions').delete().eq('group_id', groupId);
+      alert('تعذّر تسجيل قيد خزنة المحل، وتم عكس حركة الخزنة الرئيسية تلقائياً.');
+      return false;
+    }
 
-    sendTelegramAlert({
-      type: direction === 'in' ? 'savings_in' : 'savings_out',
-      actor: getActorName(get()),
-      currency: get().storeSettings.currency,
-      description: `${direction === 'in' ? 'تحويل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية'}: ${total.toFixed(2)}`,
-      amount: total,
-      paymentMethod: primary,
-      date: new Date().toISOString(),
-    });
+    sendTelegramAlert({ type: direction === 'in' ? 'savings_in' : 'savings_out', actor: getActorName(get()), currency: get().storeSettings.currency, description: `${direction === 'in' ? 'تحويل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية'}: ${total.toFixed(2)}`, amount: total, paymentMethod: primary, date: new Date().toISOString() });
     return true;
   },
 
