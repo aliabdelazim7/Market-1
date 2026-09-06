@@ -44,7 +44,6 @@ import CategoryAnalyticsPage from './pages/admin/CategoryAnalyticsPage';
 import PublicInvoice from './pages/PublicInvoice';
 import Attendance from './pages/Attendance';
 import { useStore, DEFAULT_LOGO } from './store/useStore';
-import { StickerCustomer, StickerAdmin } from './pages/StickerSystem';
 
 function ThemeInjector() {
   const { storeSettings } = useStore();
@@ -198,8 +197,7 @@ function App() {
   const isPublicInvoiceRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/view-invoice/');
   // صفحة الحضور عامة ومستقلة (كل الموظفين يستخدمونها بدون تسجيل دخول للنظام).
   const isAttendanceRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/attendance');
-  const isStickerRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/stickers');
-  const isStandaloneRoute = isPublicInvoiceRoute || isAttendanceRoute || isStickerRoute;
+  const isStandaloneRoute = isPublicInvoiceRoute || isAttendanceRoute;
 
   useEffect(() => {
     if (isStandaloneRoute) return;
@@ -321,8 +319,6 @@ function App() {
           </Route>
           <Route path="/view-invoice/:id" element={<PublicInvoice />} />
           <Route path="/attendance" element={<Attendance />} />
-          <Route path="/stickers" element={<StickerCustomer />} />
-          <Route path="/stickers/admin" element={<StickerAdmin />} />
         </Routes>
       </Router>
     </>
