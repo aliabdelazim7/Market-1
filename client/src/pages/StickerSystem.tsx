@@ -3,6 +3,7 @@ import { Link } from 'wouter';
 import { ArrowLeft, ArrowRight, Check, CheckCircle2, Clipboard, Copy, LayoutDashboard, Loader2, MessageCircle, PackageCheck, Plus, RefreshCw, Search, Send, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import './StickerSystem.css';
 import { supabase } from '../lib/supabase';
+import { getStickerArtDirection } from '../lib/stickerDesignData';
 import * as XLSX from 'xlsx';
 
 type StickerType = 'card' | 'label';
@@ -31,12 +32,14 @@ function Brand({ admin = false }: { admin?: boolean }) {
 }
 
 function StickerPreview({ design }: { design: Design }) {
-  const tone = colors.find(c => c.name === design.color)?.value || colors[0].value;
-  return <div className="sticker-preview" style={{ '--sticker-tone': tone } as React.CSSProperties}>
-    <div className="preview-sparkles">✦</div><div className="preview-topline">{design.language === 'عربي' ? 'ملكي • مميز • خاص بي' : 'MY • SPECIAL • STICKER'}</div>
-    {design.photoUrl ? <img className="preview-photo" src={design.photoUrl} alt="صورة الطالب" /> : <div className="preview-illustration">{design.stickerType === 'card' ? '✿' : '★'}</div>}
+  const art = getStickerArtDirection(`${design.id}-${design.color}-${design.studentNameAr}`);
+  const tone = colors.find(c => c.name === design.color)?.value || art.palette[0];
+  return <div className={`sticker-preview sticker-${design.stickerType}`} style={{ '--sticker-tone': tone, '--sticker-accent': art.palette[1] } as React.CSSProperties}>
+    <div className="preview-blob blob-one" /><div className="preview-blob blob-two" /><div className="preview-sparkles">{art.icon}</div>
+    <div className="preview-topline">{design.language === 'عربي' ? 'ملكي • مميز • خاص بي' : 'MY • SPECIAL • STICKER'}</div>
+    {design.photoUrl ? <div className="preview-photo-frame"><img className="preview-photo" src={design.photoUrl} alt="صورة الطالب" /></div> : <div className="preview-illustration">{art.icon}</div>}
     <div className="preview-name-ar">{design.studentNameAr || 'اسم الطالب'}</div><div className="preview-name-en">{design.studentNameEn || 'Student Name'}</div>
-    <div className="preview-footer"><span>{design.grade || 'الصف الدراسي'}</span><span>{design.stickerType === 'card' ? 'CARD' : 'LABEL'}</span></div>
+    <div className="preview-theme">{art.name}</div><div className="preview-footer"><span>{design.grade || 'الصف الدراسي'}</span><span>{design.stickerType === 'card' ? 'CARD' : 'LABEL'}</span></div>
   </div>;
 }
 
