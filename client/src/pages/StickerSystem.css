@@ -24,3 +24,8 @@
 .reference-card-preview .preview-theme{right:38%;top:61%;font-size:clamp(7px,1.1vw,10px);white-space:nowrap}
 .reference-card-preview .preview-footer{right:38%;left:8%;bottom:8%;font-size:clamp(7px,1.05vw,10px)}
 .reference-card-preview .preview-name-ar,.reference-card-preview .preview-name-en,.reference-card-preview .preview-theme,.reference-card-preview .preview-footer{z-index:6}
+
+.reference-card-preview .preview-photo-frame{left:40%!important;top:26%!important;width:18%!important}
+.reference-card-preview .preview-name-ar{right:17%!important;top:31%!important;max-width:35%!important}
+.reference-card-preview .preview-name-en{right:18%!important;top:50%!important;max-width:33%!important}
+.reference-card-preview .preview-theme{right:18%!important;top:62%!important;max-width:33%!important}
