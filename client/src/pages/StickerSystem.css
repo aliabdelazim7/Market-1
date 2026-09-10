@@ -12,3 +12,15 @@
 .reference-card-preview{background:#f8f5f1!important;overflow:hidden}.reference-template{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}.reference-card-preview:after{z-index:4}.reference-card-preview .preview-blob,.reference-card-preview .preview-sparkles,.reference-card-preview .preview-topline{display:none}.reference-card-preview .preview-photo-frame{position:absolute;left:7%;top:20%;z-index:2;width:25%;aspect-ratio:1}.reference-card-preview .preview-photo{width:100%;height:100%}.reference-card-preview .preview-illustration{display:none}.reference-card-preview .preview-name-ar,.reference-card-preview .preview-name-en,.reference-card-preview .preview-theme,.reference-card-preview .preview-footer{position:absolute;z-index:3;right:38%;max-width:54%;color:#55206f;text-shadow:none}.reference-card-preview .preview-name-ar{top:31%;font-size:20px;font-weight:900}.reference-card-preview .preview-name-en{top:49%;font-size:10px;font-weight:700}.reference-card-preview .preview-theme{top:60%;margin:0;background:rgba(255,255,255,.8);border:0;color:#55206f}.reference-card-preview .preview-footer{bottom:10%;font-size:9px;color:#55206f}.style-option.reference-style{background:#fff8fc}
 
 .style-option{min-width:0}.style-option img{background:#f5f4ef}.reference-card-preview .reference-template{object-position:center}.reference-card-preview .preview-name-ar{max-width:48%;}
+
+/* Reference and superhero cards preserve the generated template ratio; never crop the artwork. */
+.reference-card-preview{aspect-ratio:3/2!important;padding:0!important;border-radius:18px;display:block!important;background:#fff!important}
+.reference-card-preview .reference-template{object-fit:fill!important;width:100%;height:100%;inset:0;display:block}
+.reference-card-preview:before{inset:8px;z-index:5;border-color:rgba(255,255,255,.7);pointer-events:none}
+.reference-card-preview .preview-photo-frame{left:7.5%;top:21%;width:25%;height:auto;aspect-ratio:1;box-sizing:border-box;padding:4px;background:#fff;box-shadow:0 3px 7px rgba(0,0,0,.16);border-radius:50%}
+.reference-card-preview .preview-photo{width:100%;height:100%;object-fit:cover;border:0;margin:0;border-radius:50%;display:block}
+.reference-card-preview .preview-name-ar{right:37%;top:31%;font-size:clamp(15px,2.8vw,24px);line-height:1.2;white-space:nowrap}
+.reference-card-preview .preview-name-en{right:38%;top:49%;font-size:clamp(8px,1.35vw,12px);white-space:nowrap}
+.reference-card-preview .preview-theme{right:38%;top:61%;font-size:clamp(7px,1.1vw,10px);white-space:nowrap}
+.reference-card-preview .preview-footer{right:38%;left:8%;bottom:8%;font-size:clamp(7px,1.05vw,10px)}
+.reference-card-preview .preview-name-ar,.reference-card-preview .preview-name-en,.reference-card-preview .preview-theme,.reference-card-preview .preview-footer{z-index:6}
